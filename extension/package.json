@@ -1,0 +1,17 @@
+{
+  "name": "@tubetitle/extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../scripts/build-extension.mjs",
+    "dev": "node ../scripts/build-extension.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tubetitle/mdict-browser": "file:vendor/mdict-browser",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  }
+}

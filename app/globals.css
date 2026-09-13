@@ -1,0 +1,44 @@
+:root {
+  color-scheme: dark;
+  --ink: #f4f1e8;
+  --muted: #aaa69d;
+  --line: rgba(244, 241, 232, .14);
+  --accent: #d7ff4f;
+}
+
+* { box-sizing: border-box; }
+html { background: #0d0f0d; }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: radial-gradient(circle at 75% 0%, rgba(159, 196, 49, .16), transparent 32rem), #0d0f0d;
+  font-family: Arial, "PingFang SC", sans-serif;
+}
+main { width: min(1120px, calc(100% - 40px)); margin: auto; }
+nav { height: 82px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+a { color: inherit; text-decoration: none; }
+.brand { font-size: 21px; font-weight: 800; letter-spacing: -.04em; }
+.status { color: var(--muted); font-size: 14px; }
+.status::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: var(--accent); }
+.hero { padding: 110px 0 100px; max-width: 900px; }
+.eyebrow { color: var(--accent); font-size: 12px; letter-spacing: .18em; font-weight: 700; }
+h1 { margin: 24px 0; font-size: clamp(48px, 8vw, 92px); line-height: .98; letter-spacing: -.065em; }
+.intro { max-width: 680px; color: var(--muted); font-size: 19px; line-height: 1.75; }
+.actions { display: flex; gap: 12px; margin-top: 38px; flex-wrap: wrap; }
+.actions a { padding: 14px 20px; border: 1px solid var(--line); border-radius: 8px; font-weight: 700; }
+.actions .primary { color: #111; background: var(--accent); border-color: var(--accent); }
+.actions .secondary:hover { border-color: var(--muted); }
+.content-grid { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
+article { padding: 48px 0 52px; }
+article + article { padding-left: 52px; border-left: 1px solid var(--line); }
+.number { color: var(--accent); font-family: monospace; font-size: 13px; }
+h2 { margin: 18px 0 28px; font-size: 25px; }
+ul, ol { padding-left: 20px; color: var(--muted); line-height: 2; }
+li::marker { color: var(--accent); }
+footer { padding: 30px 0 50px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+@media (max-width: 700px) {
+  main { width: min(100% - 28px, 1120px); }
+  .hero { padding: 76px 0 70px; }
+  .content-grid { grid-template-columns: 1fr; }
+  article + article { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); }
+}

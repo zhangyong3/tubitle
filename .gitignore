@@ -1,0 +1,16 @@
+node_modules/
+.next/
+*.tsbuildinfo
+.venv/
+dist/
+.env*
+!.env.example
+instance/
+*.db
+.DS_Store
+coverage/
+*.log
+extension/*.zip
+__pycache__/
+.pytest_cache/
+tags

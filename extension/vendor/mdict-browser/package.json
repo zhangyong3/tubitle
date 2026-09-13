@@ -1,0 +1,11 @@
+{
+  "name": "@tubetitle/mdict-browser",
+  "version": "1.0.6-tubetitle.1",
+  "private": true,
+  "main": "dist/mdict/mdict.js",
+  "types": "dist/mdict/mdict.d.ts",
+  "license": "MIT",
+  "dependencies": {
+    "pako": "^2.1.0"
+  }
+}
