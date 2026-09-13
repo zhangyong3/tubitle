@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Mdict from "@tubetitle/mdict-browser";
 import {
@@ -8,7 +8,13 @@ import {
   getOfflineDictionaryResourceFiles,
   type DictionaryQuery
 } from "./shared/offline-dictionary";
-import type { ExtensionSettings } from "./shared/types";
+import type {
+  ExtensionSettings,
+  TranscriptPanelFrameMessage,
+  TranscriptPanelHostMessage,
+  TranscriptPanelSnapshot,
+  TranscriptPanelTab
+} from "./shared/types";
 import { normalizeDictionaryWord, selectDictionaryCandidates } from "./shared/dictionary-lookup";
 import { sanitizeDictionaryHtml } from "./shared/dictionary-sanitize";
 import { loadDictionaryCss } from "./shared/dictionary-presentation";
@@ -31,7 +37,10 @@ import {
   type SidebarHistoryEntry
 } from "./shared/sidebar-history";
 
-type SidebarTab = "dictionary" | "analysis" | "history";
+type SidebarTab = TranscriptPanelTab;
+
+const EMBEDDED = new URLSearchParams(location.search).has("embedded");
+const YOUTUBE_ORIGIN = "https://www.youtube.com";
 
 interface LookupResult {
   word: string;
@@ -47,6 +56,11 @@ let dictionaryPromise: Promise<Mdict> | undefined;
 let dictionaryCssPromise: Promise<string> | undefined;
 let resourceDictionariesPromise: Promise<Mdict[]> | undefined;
 let activeAudio: HTMLAudioElement | undefined;
+
+function postToHost(message: TranscriptPanelFrameMessage): void {
+  if (!EMBEDDED || window.parent === window) return;
+  window.parent.postMessage(message, YOUTUBE_ORIGIN);
+}
 
 function getCustomDictionaryCss(): Promise<string> {
   dictionaryCssPromise ??= getOfflineDictionaryCss().catch((error) => {
@@ -182,7 +196,9 @@ function DictionaryDefinition({ html, css, onSearch, onPlaybackError }: {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<SidebarTab>("dictionary");
+  const [activeTab, setActiveTab] = useState<SidebarTab>(EMBEDDED ? "subtitles" : "dictionary");
+  const [transcript, setTranscript] = useState<TranscriptPanelSnapshot>();
+  const [transcriptAutoFollow, setTranscriptAutoFollow] = useState(true);
   const [result, setResult] = useState<LookupResult>();
   const [loadingWord, setLoadingWord] = useState("");
   const [playbackError, setPlaybackError] = useState("");
@@ -200,6 +216,36 @@ function App() {
   const upstreamError = useRef("");
   const upstreamText = useRef("");
   const historyLimitRef = useRef(DEFAULT_HISTORY_LIMIT);
+
+  useEffect(() => {
+    if (!EMBEDDED) return;
+    const listener = (event: MessageEvent<TranscriptPanelHostMessage>) => {
+      if (event.source !== window.parent || event.origin !== YOUTUBE_ORIGIN) return;
+      const message = event.data;
+      if (message?.source !== "tubitle-host") return;
+      if (message.type === "TRANSCRIPT_STATE") {
+        setTranscript(message.state);
+      } else if (message.type === "TRANSCRIPT_ACTIVE") {
+        setTranscript((current) => current ? {
+          ...current,
+          activeIndex: message.activeIndex,
+          currentTimeMs: message.currentTimeMs,
+          durationMs: message.durationMs
+        } : current);
+      } else if (message.type === "TRANSCRIPT_TRANSLATION") {
+        setTranscript((current) => current ? {
+          ...current,
+          sentences: current.sentences.map((sentence) => sentence.id === message.sentenceId
+            ? { ...sentence, translation: message.translation, translationError: message.error }
+            : sentence)
+        } : current);
+      } else if (message.type === "OPEN_PANEL_TAB") {
+        setActiveTab(message.tab);
+      }
+    };
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
+  }, []);
 
   function stopAnalysisStream() {
     analysisController.current?.abort();
@@ -284,6 +330,7 @@ function App() {
       setHistoryLimit(settings.historyLimit);
       const savedHistory = parseSidebarHistory(stored[SIDEBAR_HISTORY_KEY]);
       setHistory(savedHistory);
+      if (EMBEDDED) return;
       const dictionaryQuery = stored[DICTIONARY_QUERY_KEY] as DictionaryQuery | undefined;
       const analysisQuery = stored[ANALYSIS_QUERY_KEY] as AnalysisQuery | undefined;
       if (analysisQuery?.sentence && (analysisQuery.createdAt ?? 0) >= (dictionaryQuery?.createdAt ?? 0)) {
@@ -368,6 +415,19 @@ function App() {
   }
 
   const tabs = <SidebarTabs activeTab={activeTab} onSelect={setActiveTab} />;
+
+  if (activeTab === "subtitles") {
+    return (
+      <div className="sidepanel-shell embedded-shell">
+        {tabs}
+        <TranscriptPage
+          snapshot={transcript}
+          autoFollow={transcriptAutoFollow}
+          onAutoFollowChange={setTranscriptAutoFollow}
+        />
+      </div>
+    );
+  }
 
   if (activeTab === "analysis") {
     return (
@@ -470,6 +530,17 @@ function SidebarTabs({ activeTab, onSelect }: {
     <nav className="side-tabs" role="tablist" aria-label="学习工具">
       <button
         type="button"
+        className={`side-tab${activeTab === "subtitles" ? " active" : ""}`}
+        id="subtitles-tab"
+        role="tab"
+        aria-selected={activeTab === "subtitles"}
+        aria-controls="subtitles-panel"
+        onClick={() => onSelect("subtitles")}
+      >
+        字幕
+      </button>
+      <button
+        type="button"
         className={`side-tab${activeTab === "dictionary" ? " active" : ""}`}
         id="dictionary-tab"
         role="tab"
@@ -503,6 +574,132 @@ function SidebarTabs({ activeTab, onSelect }: {
       </button>
     </nav>
   );
+}
+
+function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange }: {
+  snapshot?: TranscriptPanelSnapshot;
+  autoFollow: boolean;
+  onAutoFollowChange: (value: boolean) => void;
+}) {
+  const listRef = useRef<HTMLOListElement>(null);
+  const scrollFrame = useRef<number | undefined>(undefined);
+  const activeIndex = snapshot?.activeIndex ?? -1;
+
+  function requestVisibleTranslations() {
+    const list = listRef.current;
+    if (!list || !snapshot?.sentences.length) return;
+    const bounds = list.getBoundingClientRect();
+    const indexes = Array.from(list.querySelectorAll<HTMLElement>(".transcript-item"))
+      .filter((item) => {
+        const itemBounds = item.getBoundingClientRect();
+        return itemBounds.bottom >= bounds.top - 160 && itemBounds.top <= bounds.bottom + 160;
+      })
+      .map((item) => Number(item.dataset.index))
+      .filter(Number.isInteger);
+    if (indexes.length > 0) postToHost({ source: "tubitle-panel", type: "PREFETCH_CAPTIONS", indexes });
+  }
+
+  useEffect(() => {
+    if (!snapshot) return;
+    if (autoFollow && activeIndex >= 0) {
+      listRef.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    window.setTimeout(requestVisibleTranslations, 0);
+  }, [snapshot?.videoId, snapshot?.sentences.length, activeIndex, autoFollow]);
+
+  useEffect(() => () => {
+    if (scrollFrame.current !== undefined) window.cancelAnimationFrame(scrollFrame.current);
+  }, []);
+
+  const progress = snapshot && snapshot.durationMs > 0
+    ? Math.min(100, Math.max(0, snapshot.currentTimeMs / snapshot.durationMs * 100))
+    : 0;
+
+  return (
+    <main className="transcript-page" id="subtitles-panel" role="tabpanel" aria-labelledby="subtitles-tab">
+      <header className="transcript-header">
+        <div className="transcript-heading-copy">
+          <div className="brand">Tubitle · 当前视频</div>
+          <h1>{snapshot?.videoTitle || "双语字幕"}</h1>
+        </div>
+        <div className="transcript-actions">
+          <label><input type="checkbox" checked={autoFollow} onChange={(event) => onAutoFollowChange(event.target.checked)} /> 自动跟随</label>
+          {EMBEDDED && (
+            <button
+              type="button"
+              className="collapse-panel"
+              aria-label="收起学习面板"
+              onClick={() => postToHost({ source: "tubitle-panel", type: "COLLAPSE_PANEL" })}
+            >
+              收起
+            </button>
+          )}
+        </div>
+      </header>
+      <div className="transcript-progress" aria-label="视频播放进度">
+        <time>{formatCaptionTime(snapshot?.currentTimeMs ?? 0)}</time>
+        <div><span style={{ width: `${progress}%` }} /></div>
+        <time>{formatCaptionTime(snapshot?.durationMs ?? 0)}</time>
+      </div>
+      {snapshot?.loading ? (
+        <div className="transcript-state">正在读取当前视频字幕…</div>
+      ) : snapshot?.error ? (
+        <div className="transcript-state error">{snapshot.error}</div>
+      ) : snapshot?.sentences.length ? (
+        <ol
+          className="transcript-list"
+          ref={listRef}
+          onScroll={() => {
+            if (scrollFrame.current !== undefined) window.cancelAnimationFrame(scrollFrame.current);
+            scrollFrame.current = window.requestAnimationFrame(requestVisibleTranslations);
+          }}
+        >
+          {snapshot.sentences.map((sentence, index) => (
+            <TranscriptCueRow sentence={sentence} index={index} active={index === activeIndex} key={sentence.id} />
+          ))}
+        </ol>
+      ) : (
+        <div className="transcript-state">打开一个带英文字幕的 YouTube 视频后，字幕会显示在这里。</div>
+      )}
+    </main>
+  );
+}
+
+const TranscriptCueRow = memo(function TranscriptCueRow({ sentence, index, active }: {
+  sentence: TranscriptPanelSnapshot["sentences"][number];
+  index: number;
+  active: boolean;
+}) {
+  return (
+    <li className={`transcript-item${active ? " active" : ""}`} data-index={index}>
+      <button
+        type="button"
+        aria-current={active ? "true" : undefined}
+        onClick={() => postToHost({ source: "tubitle-panel", type: "SEEK_TO_CAPTION", index })}
+      >
+        <time>{formatCaptionTime(sentence.startMs)}</time>
+        <span className="timeline-node" aria-hidden="true">{active ? "▶" : ""}</span>
+        <span className="transcript-copy">
+          <strong>{sentence.text}</strong>
+          <small className={sentence.translationError ? "translation-error" : ""}>
+            {sentence.translation || sentence.translationError || "正在翻译…"}
+          </small>
+        </span>
+      </button>
+    </li>
+  );
+});
+
+function formatCaptionTime(valueMs: number): string {
+  if (!Number.isFinite(valueMs) || valueMs < 0) return "00:00";
+  const seconds = Math.floor(valueMs / 1000);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  const remainder = seconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
 function analysisPreview(value: string): string {

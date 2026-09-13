@@ -70,6 +70,35 @@ export interface CaptionSentence {
   endMs: number;
 }
 
+export interface TranscriptPanelSentence extends CaptionSentence {
+  translation?: string;
+  translationError?: string;
+}
+
+export interface TranscriptPanelSnapshot {
+  videoId: string;
+  videoTitle: string;
+  sentences: TranscriptPanelSentence[];
+  activeIndex: number;
+  currentTimeMs: number;
+  durationMs: number;
+  loading: boolean;
+  error?: string;
+}
+
+export type TranscriptPanelTab = "subtitles" | "dictionary" | "analysis" | "history";
+
+export type TranscriptPanelHostMessage =
+  | { source: "tubitle-host"; type: "TRANSCRIPT_STATE"; state: TranscriptPanelSnapshot }
+  | { source: "tubitle-host"; type: "TRANSCRIPT_ACTIVE"; activeIndex: number; currentTimeMs: number; durationMs: number }
+  | { source: "tubitle-host"; type: "TRANSCRIPT_TRANSLATION"; sentenceId: string; translation?: string; error?: string }
+  | { source: "tubitle-host"; type: "OPEN_PANEL_TAB"; tab: TranscriptPanelTab };
+
+export type TranscriptPanelFrameMessage =
+  | { source: "tubitle-panel"; type: "SEEK_TO_CAPTION"; index: number }
+  | { source: "tubitle-panel"; type: "PREFETCH_CAPTIONS"; indexes: number[] }
+  | { source: "tubitle-panel"; type: "COLLAPSE_PANEL" };
+
 export interface SentenceAnalysis {
   original: string;
   translation: string;

@@ -4,7 +4,7 @@
   "description": "YouTube AI双语实时字幕、离线词典、上下句跳转，大模型语句分析。",
   "version": "1.0.0",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "activeTab", "clipboardWrite", "sidePanel"],
+  "permissions": ["storage", "activeTab", "clipboardWrite"],
   "host_permissions": [
     "https://www.youtube.com/*",
     "https://*.googlevideo.com/*",
@@ -30,9 +30,12 @@
     }
   },
   "options_page": "options.html",
-  "side_panel": {
-    "default_path": "sidepanel.html"
-  },
+  "web_accessible_resources": [
+    {
+      "resources": ["sidepanel.html", "sidepanel.js"],
+      "matches": ["https://www.youtube.com/*"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],

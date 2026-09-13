@@ -186,7 +186,7 @@ function App() {
           {dictionaryMessage && <p className="hint">{dictionaryMessage}</p>}
         </section>
         <section className="card">
-          <h2>侧边栏历史</h2>
+          <h2>学习面板历史</h2>
           <div className="grid">
             <div className="field">
               <label htmlFor="history-limit">每类保留数量</label>

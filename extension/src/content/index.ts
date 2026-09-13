@@ -1,14 +1,19 @@
 import { fetchBilingualCaptions } from "./captions";
+import { PageLearningPanel } from "./learning-panel";
 import { SubtitleOverlay } from "./overlay";
 import { prefetchBatchPlan, type PrefetchBatchState } from "./prefetch";
 import { shortcutFromEvent, shortcutsMatch } from "./shortcuts";
 import { findSentenceIndex, navigationTargetIndex, type NavigationDirection } from "./navigation";
 import { sendMessage } from "../shared/messaging";
 import { getSettings, updateSettings } from "../shared/settings";
+import { DICTIONARY_QUERY_KEY } from "../shared/offline-dictionary";
+import { ANALYSIS_QUERY_KEY } from "../shared/analysis-stream";
+import { normalizeDictionaryWord } from "../shared/dictionary-lookup";
 import type {
   CaptionSentence,
   CaptionTrack,
-  ExtensionSettings
+  ExtensionSettings,
+  TranscriptPanelSnapshot
 } from "../shared/types";
 import type { TranscriptCue } from "../shared/youtube-transcript";
 import { cuesToSentences } from "./captions";
@@ -19,9 +24,13 @@ let activeIndex = -1;
 let loadVersion = 0;
 let pausedByHover = false;
 let lastLayoutUpdate = 0;
+let panelLayoutFrame: number | undefined;
 let unavailableSubtitleTimer: number | undefined;
+let transcriptLoading = false;
+let transcriptError = "";
 const translations = new Map<string, string>();
 const officialTranslations = new Map<string, string>();
+const translationErrors = new Map<string, string>();
 const pendingTranslations = new Map<string, Promise<string>>();
 const queuedTranslationKeys = new Set<string>();
 const translationQueue: Array<{ sentence: CaptionSentence; provider: ExtensionSettings["provider"]; key: string }> = [];
@@ -40,6 +49,38 @@ function videoElement(): HTMLVideoElement | null {
   return document.querySelector("video.html5-main-video, video");
 }
 
+function isWatchPage(): boolean {
+  return location.hostname === "www.youtube.com" && location.pathname === "/watch" && Boolean(new URL(location.href).searchParams.get("v"));
+}
+
+function currentVideoTitle(): string {
+  const heading = document.querySelector<HTMLElement>("ytd-watch-metadata h1 yt-formatted-string, #title h1 yt-formatted-string");
+  const title = heading?.textContent?.trim() || document.title.replace(/\s*-\s*YouTube\s*$/i, "").trim();
+  return title || "双语字幕";
+}
+
+function transcriptSnapshot(video = videoElement()): TranscriptPanelSnapshot {
+  return {
+    videoId: new URL(location.href).searchParams.get("v") ?? "",
+    videoTitle: currentVideoTitle(),
+    sentences: sentences.map((sentence) => ({
+      ...sentence,
+      translation: officialTranslations.get(sentence.id) || translations.get(translationKey(sentence, settings.provider)),
+      translationError: translationErrors.get(sentence.id)
+    })),
+    activeIndex,
+    currentTimeMs: (video?.currentTime ?? 0) * 1000,
+    durationMs: Number.isFinite(video?.duration) ? (video?.duration ?? 0) * 1000 : 0,
+    loading: transcriptLoading,
+    error: transcriptError || undefined
+  };
+}
+
+function publishTranscriptSnapshot(): void {
+  if (!settings) return;
+  learningPanel.setSnapshot(transcriptSnapshot());
+}
+
 const overlay = new SubtitleOverlay({
   onEnter: () => {
     if (!settings.hoverPause) return;
@@ -55,13 +96,7 @@ const overlay = new SubtitleOverlay({
     pausedByHover = false;
   },
   onLookup: (word) => {
-    void sendMessage({
-      type: "OPEN_DICTIONARY",
-      word,
-      offline: settings.offlineDictionary.configured
-    }).catch((error: unknown) => {
-      overlay.showStatus(errorMessage(error), true);
-    });
+    void openDictionary(word);
   },
   onCopy: async (word) => {
     await navigator.clipboard.writeText(word);
@@ -71,6 +106,11 @@ const overlay = new SubtitleOverlay({
     void updateSettings({ subtitlePosition: position });
   },
   onAnalyze: () => void analyzeCurrentSentence()
+});
+
+const learningPanel = new PageLearningPanel({
+  onSeek: (index) => seekTo(index),
+  onPrefetch: (indexes) => prefetchCaptionIndexes(indexes)
 });
 
 function applySettings(): void {
@@ -120,12 +160,16 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
   activeIndex = -1;
   translations.clear();
   officialTranslations.clear();
+  translationErrors.clear();
   translationQueue.length = 0;
   queuedTranslationKeys.clear();
   prefetchStateByProvider.clear();
   overlay.hideSentence();
   overlay.clearStatus();
+  transcriptLoading = true;
+  transcriptError = "";
   applySettings();
+  publishTranscriptSnapshot();
   try {
     let loaded;
     try {
@@ -150,12 +194,17 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
     if (version !== loadVersion) return;
     sentences = loaded.sentences;
     for (const [id, translation] of loaded.officialTranslations) officialTranslations.set(id, translation);
+    transcriptLoading = false;
     applySettings();
     overlay.clearStatus();
+    publishTranscriptSnapshot();
   } catch (error) {
     if (version !== loadVersion) return;
     const message = errorMessage(error);
+    transcriptLoading = false;
+    transcriptError = message;
     overlay.showStatus(message, true);
+    publishTranscriptSnapshot();
     if (message === "没有可用的英文字幕") {
       unavailableSubtitleTimer = window.setTimeout(() => {
         if (version !== loadVersion) return;
@@ -189,6 +238,8 @@ async function getSentenceTranslation(
     provider
   }).then((translation) => {
     translations.set(key, translation);
+    translationErrors.delete(sentence.id);
+    learningPanel.setTranslation(sentence.id, translation);
     return translation;
   }).finally(() => {
     pendingTranslations.delete(key);
@@ -198,20 +249,23 @@ async function getSentenceTranslation(
 }
 
 async function translateSentence(sentence: CaptionSentence): Promise<void> {
-  if (!settings.showChinese) return;
   const provider = settings.provider;
   try {
     const translation = await getSentenceTranslation(sentence, provider);
-    if (provider === settings.provider || officialTranslations.has(sentence.id)) {
+    translationErrors.delete(sentence.id);
+    learningPanel.setTranslation(sentence.id, translation);
+    if (settings.showChinese && (provider === settings.provider || officialTranslations.has(sentence.id))) {
       overlay.showTranslation(sentence.id, translation);
     }
   } catch (error) {
-    overlay.showTranslationError(sentence.id, errorMessage(error));
+    const message = errorMessage(error);
+    translationErrors.set(sentence.id, message);
+    learningPanel.setTranslation(sentence.id, undefined, message);
+    if (settings.showChinese) overlay.showTranslationError(sentence.id, message);
   }
 }
 
 function scheduleTranslationPrefetch(currentIndex: number): void {
-  if (!settings.showChinese) return;
   const provider = settings.provider;
   if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
   const plan = prefetchBatchPlan(
@@ -238,6 +292,29 @@ function scheduleTranslationPrefetch(currentIndex: number): void {
   drainTranslationQueue();
 }
 
+function prefetchCaptionIndexes(indexes: number[]): void {
+  const provider = settings.provider;
+  if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
+  for (const index of new Set(indexes)) {
+    const sentence = sentences[index];
+    if (!sentence) continue;
+    const official = officialTranslations.get(sentence.id);
+    if (official) {
+      learningPanel.setTranslation(sentence.id, official);
+      continue;
+    }
+    const key = translationKey(sentence, provider);
+    if (translations.has(key)) {
+      learningPanel.setTranslation(sentence.id, translations.get(key));
+      continue;
+    }
+    if (pendingTranslations.has(key) || queuedTranslationKeys.has(key)) continue;
+    translationQueue.push({ sentence, provider, key });
+    queuedTranslationKeys.add(key);
+  }
+  drainTranslationQueue();
+}
+
 function drainTranslationQueue(): void {
   while (activeTranslationWorkers < MAX_TRANSLATION_WORKERS && translationQueue.length > 0) {
     const item = translationQueue.shift()!;
@@ -245,7 +322,10 @@ function drainTranslationQueue(): void {
     if ((prefetchBlockedUntil.get(item.provider) ?? 0) > Date.now()) continue;
     activeTranslationWorkers += 1;
     void getSentenceTranslation(item.sentence, item.provider)
-      .catch(() => {
+      .catch((error: unknown) => {
+        const message = errorMessage(error);
+        translationErrors.set(item.sentence.id, message);
+        learningPanel.setTranslation(item.sentence.id, undefined, message);
         prefetchBlockedUntil.set(item.provider, Date.now() + 30_000);
         for (let index = translationQueue.length - 1; index >= 0; index -= 1) {
           const queued = translationQueue[index]!;
@@ -266,10 +346,35 @@ async function analyzeCurrentSentence(): Promise<void> {
   const sentence = sentences[activeIndex];
   if (!sentence) return;
   try {
-    await sendMessage<void>({
-      type: "OPEN_ANALYSIS",
-      sentence: sentence.text
+    await chrome.storage.local.set({
+      [ANALYSIS_QUERY_KEY]: {
+        sentence: sentence.text,
+        requestId: crypto.randomUUID(),
+        createdAt: Date.now()
+      }
     });
+    learningPanel.openTab("analysis");
+  } catch (error) {
+    overlay.showStatus(errorMessage(error), true);
+  }
+}
+
+async function openDictionary(value: string): Promise<void> {
+  const word = normalizeDictionaryWord(value);
+  if (!word) return;
+  try {
+    if (!settings.offlineDictionary.configured) {
+      await sendMessage<void>({ type: "OPEN_DICTIONARY", word, offline: false });
+      return;
+    }
+    await chrome.storage.local.set({
+      [DICTIONARY_QUERY_KEY]: {
+        word,
+        requestId: crypto.randomUUID(),
+        createdAt: Date.now()
+      }
+    });
+    learningPanel.openTab("dictionary");
   } catch (error) {
     overlay.showStatus(errorMessage(error), true);
   }
@@ -327,14 +432,31 @@ function handleShortcut(event: KeyboardEvent): void {
   }
 }
 
-function tick(timestamp: number): void {
-  if (settings?.enabled) {
+function schedulePanelLayoutUpdate(): void {
+  if (panelLayoutFrame !== undefined) return;
+  panelLayoutFrame = window.requestAnimationFrame(() => {
+    panelLayoutFrame = undefined;
     const video = videoElement();
+    if (!settings?.enabled || !video || !isWatchPage() || document.fullscreenElement) return;
+    learningPanel.updateLayout(video.getBoundingClientRect());
+  });
+}
+
+function tick(timestamp: number): void {
+  const video = videoElement();
+  const panelVisible = Boolean(settings?.enabled && video && isWatchPage() && !document.fullscreenElement);
+  learningPanel.setVisible(panelVisible);
+  if (settings?.enabled) {
     if (video) {
       if (timestamp - lastLayoutUpdate >= 200) {
         const fullscreenParent = document.fullscreenElement;
         overlay.attachTo(fullscreenParent?.contains(video) ? fullscreenParent : document.documentElement);
-        overlay.updateVideoBounds(video.getBoundingClientRect());
+        const bounds = video.getBoundingClientRect();
+        overlay.updateVideoBounds(bounds);
+        if (panelVisible) {
+          learningPanel.updateLayout(bounds);
+          learningPanel.setActive(activeIndex, video.currentTime * 1000, Number.isFinite(video.duration) ? video.duration * 1000 : 0);
+        }
         lastLayoutUpdate = timestamp;
       }
       activateSentence(findSentenceIndex(sentences, video.currentTime * 1000));
@@ -352,6 +474,8 @@ document.addEventListener("tubetitle:tracks", (event) => {
   if (detail?.tracks) void loadTracks(detail.tracks, detail.url);
 });
 document.addEventListener("keydown", handleShortcut, true);
+document.addEventListener("scroll", schedulePanelLayoutUpdate, { capture: true, passive: true });
+window.addEventListener("resize", schedulePanelLayoutUpdate, { passive: true });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes.settings) return;
   void getSettings().then((next) => {
@@ -364,9 +488,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
       queuedTranslationKeys.clear();
       prefetchBlockedUntil.clear();
       prefetchStateByProvider.clear();
+      translationErrors.clear();
     }
     settings = next;
     applySettings();
+    publishTranscriptSnapshot();
     if (connectionChanged && activeIndex >= 0) scheduleTranslationPrefetch(activeIndex);
   });
 });

@@ -137,12 +137,8 @@ chrome.runtime.onMessage.addListener(
           case "OPEN_ANALYSIS": {
             const sentence = message.sentence.trim();
             if (!sentence) throw new Error("当前没有可解析的句子");
-            const tabId = sender.tab?.id;
-            if (tabId === undefined) throw new Error("无法确定当前视频标签页");
             const query = { sentence, requestId: crypto.randomUUID(), createdAt: Date.now() };
-            const openSidePanel = chrome.sidePanel.open({ tabId });
-            const publishQuery = chrome.storage.local.set({ [ANALYSIS_QUERY_KEY]: query });
-            await Promise.all([openSidePanel, publishQuery]);
+            await chrome.storage.local.set({ [ANALYSIS_QUERY_KEY]: query });
             sendResponse({ ok: true, data: null });
             break;
           }
@@ -150,12 +146,8 @@ chrome.runtime.onMessage.addListener(
             const word = normalizeDictionaryWord(message.word);
             if (!word) throw new Error("无法识别要查询的单词");
             if (message.offline) {
-              const tabId = sender.tab?.id;
-              if (tabId === undefined) throw new Error("无法确定当前视频标签页");
               const query = { word, requestId: crypto.randomUUID(), createdAt: Date.now() };
-              const openSidePanel = chrome.sidePanel.open({ tabId });
-              const publishQuery = chrome.storage.local.set({ [DICTIONARY_QUERY_KEY]: query });
-              await Promise.all([openSidePanel, publishQuery]);
+              await chrome.storage.local.set({ [DICTIONARY_QUERY_KEY]: query });
               sendResponse({ ok: true, data: null });
               break;
             }
