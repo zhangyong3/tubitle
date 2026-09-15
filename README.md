@@ -1,25 +1,21 @@
 # Tubitle
 
-Tubitle 是一个个人自托管的 YouTube 英语学习工具，由 **Next.js API + Chrome/Edge Manifest V3 扩展**组成。服务端可直接部署到 Vercel.
+Tubitle 是一个完全在浏览器扩展中运行的 YouTube 英语学习工具，不需要账号、自建服务端或 Vercel。
 
 ## 功能
 
 - 英文、中文双行字幕，自动优先选择英文人工字幕
-- 使用视频官方中文字幕，或调用 Microsoft、Google Cloud、腾讯云翻译
+- Microsoft、Google Cloud、腾讯云机器翻译
+- 当前句优先、受控并发、逐句显示与本地持久缓存
 - 上一句、下一句、重复当前句与自定义快捷键
-- 字幕位置、字号、颜色及悬停暂停
 - 离线 MDX/MDD 词典、发音、查词历史
 - 通过 OpenAI Chat Completions 兼容接口流式解析句子
-- 个人访问令牌保护 API，服务商密钥只保存在服务端
 
-## 项目结构
+## 隐私与密钥
 
-```text
-app/             Next.js 页面与 Route Handlers
-lib/server/      服务端鉴权、缓存、翻译及 LLM 实现
-extension/  TypeScript + React 浏览器扩展
-scripts/         扩展构建脚本
-```
+翻译和大模型密钥只保存到 `chrome.storage.local`，不会写入网页、同步到 Chrome 云端或发送给 Tubitle 服务。扩展后台只会把字幕原文和对应凭证发送给用户选择的 API 服务商。
+
+浏览器本地存储不是系统钥匙串。能访问本机浏览器配置或扩展调试环境的软件仍可能读取这些密钥，请使用权限受限、可随时轮换的 API 凭证。
 
 ## 本地开发
 
@@ -27,58 +23,23 @@ scripts/         扩展构建脚本
 
 ```bash
 npm install
-cp .env.example .env.local
-npm run dev
+npm run build
 ```
 
-编辑 `.env.local`，至少填写：
+打开 `chrome://extensions`，启用开发者模式，选择“加载已解压的扩展程序”，加载 `extension/dist`。随后打开扩展设置，填写所需服务商密钥并点击测试连接。
 
-- `PERSONAL_ACCESS_TOKEN`：自定义长随机字符串
-- 一种翻译服务的密钥
-- 使用语句解析时填写 `LLM_API_KEY`，并按需修改 `LLM_BASE_URL` 和 `LLM_MODEL`
+固定申请的服务域名包括腾讯云、Microsoft 和 Google 翻译。自定义 Microsoft Endpoint 与大模型 Base URL 会在保存时由浏览器请求对应的可选主机权限。
 
-浏览器打开 `http://localhost:3000/api/health` 可查看各项是否已配置；接口只返回布尔状态，不会暴露密钥。
+## 项目结构
 
-## 构建扩展
-
-```bash
-npm run build:extension
+```text
+extension/src/background.ts       本地任务调度与消息处理
+extension/src/local-providers.ts  翻译、腾讯云签名与大模型请求
+extension/src/background-cache.ts IndexedDB 翻译缓存
+extension/src/content/            YouTube 字幕与学习面板宿主
+extension/src/shared/             设置、词典、历史与共享类型
+scripts/build-extension.mjs       扩展构建脚本
 ```
-
-打开 `chrome://extensions`，启用开发者模式，选择“加载已解压的扩展程序”，加载 `extension/dist`。然后打开扩展设置：
-
-1. 服务地址填写 `http://localhost:3000` 或 Vercel 生产地址。
-2. 个人访问令牌填写与 `PERSONAL_ACCESS_TOKEN` 完全相同的值。
-3. 选择已在服务端配置的默认翻译引擎并保存。
-
-扩展会在保存服务地址时请求访问该域名，不会在安装时申请全部网站权限。
-
-## 部署到 Vercel
-
-1. 将仓库推送到 Git 服务，在 Vercel 中导入仓库。
-2. Framework Preset 选择 Next.js，Root Directory 保持仓库根目录。
-3. 在 Environment Variables 中复制 `.env.example` 所需变量。
-4. 部署后访问 `https://你的域名/api/health` 检查配置。
-5. 在扩展设置中填写 Vercel 地址与 `PERSONAL_ACCESS_TOKEN`。
-
-建议先加载扩展，再从 `chrome://extensions` 复制扩展 ID，配置到 `ALLOWED_EXTENSION_IDS`。未配置该变量时接受任意 `chrome-extension://` 来源，但每个业务 API 仍必须提供正确的个人访问令牌。
-
-Vercel 的无服务器实例可能随时重建，因此内存缓存只是性能优化，不用于保存账号或用量。此个人版没有持久化服务端数据。
-
-## 环境变量
-
-| 变量 | 用途 |
-| --- | --- |
-| `PERSONAL_ACCESS_TOKEN` | 必填；保护翻译和 LLM API |
-| `ALLOWED_EXTENSION_IDS` | 可选；限制允许跨域访问的扩展 ID |
-| `MICROSOFT_TRANSLATOR_KEY` | Microsoft Translator 密钥 |
-| `MICROSOFT_TRANSLATOR_REGION` | Microsoft Translator 区域 |
-| `GOOGLE_TRANSLATE_API_KEY` | Google Cloud Translation Basic v2 密钥 |
-| `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 腾讯云机器翻译凭证 |
-| `TENCENT_REGION` | 腾讯云区域，默认 `ap-guangzhou` |
-| `LLM_BASE_URL` | OpenAI 兼容 API 根地址 |
-| `LLM_API_KEY` | 大模型 API 密钥 |
-| `LLM_MODEL` | 模型名称，默认 `gpt-4.1-mini` |
 
 ## 验证
 
@@ -86,7 +47,6 @@ Vercel 的无服务器实例可能随时重建，因此内存缓存只是性能�
 npm run typecheck
 npm test
 npm run build
-npm run build:extension
 ```
 
 ## 默认快捷键
@@ -98,5 +58,3 @@ npm run build:extension
 | 重复当前句 | `Alt+R` |
 | 显示/隐藏中文 | `Alt+T` |
 | 解析当前句 | `Alt+A` |
-
-快捷键可在扩展设置中修改。

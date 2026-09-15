@@ -148,6 +148,11 @@ function DictionaryDefinition({ html, css, onSearch, onPlaybackError }: {
   onPlaybackError: (message: string) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const onSearchRef = useRef(onSearch);
+  const onPlaybackErrorRef = useRef(onPlaybackError);
+  onSearchRef.current = onSearch;
+  onPlaybackErrorRef.current = onPlaybackError;
+
   useEffect(() => {
     const iframe = frame.current;
     if (!iframe) return;
@@ -168,17 +173,17 @@ function DictionaryDefinition({ html, css, onSearch, onPlaybackError }: {
           event.preventDefault();
           const audioUrl = sound.dataset.audioUrl;
           if (!audioUrl) {
-            onPlaybackError("未找到该发音资源，请在扩展设置中选择与 MDX 配套的 MDD 文件。");
+            onPlaybackErrorRef.current("未找到该发音资源，请在扩展设置中选择与 MDX 配套的 MDD 文件。");
             return;
           }
           activeAudio?.pause();
           activeAudio = new Audio(audioUrl);
-          void activeAudio.play().catch(() => onPlaybackError("音频播放失败，该格式可能不受浏览器支持。"));
+          void activeAudio.play().catch(() => onPlaybackErrorRef.current("音频播放失败，该格式可能不受浏览器支持。"));
           return;
         }
         const link = (event.target as Element | null)?.closest<HTMLElement>("[data-entry]");
         const entry = link?.dataset.entry;
-        if (entry) { event.preventDefault(); onSearch(entry); }
+        if (entry) { event.preventDefault(); onSearchRef.current(entry); }
       };
       documentValue.addEventListener("click", click);
       observer = new ResizeObserver(resize);
@@ -191,7 +196,7 @@ function DictionaryDefinition({ html, css, onSearch, onPlaybackError }: {
       iframe.removeEventListener("load", render);
       observer?.disconnect();
     };
-  }, [html, css, onSearch, onPlaybackError]);
+  }, [html, css]);
   return <iframe className="definition" ref={frame} title="离线词典释义" sandbox="allow-same-origin" />;
 }
 

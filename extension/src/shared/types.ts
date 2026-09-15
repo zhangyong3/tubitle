@@ -27,8 +27,17 @@ export interface ExtensionSettings {
   hoverPause: boolean;
   resumeAfterHover: boolean;
   provider: TranslationProvider;
-  serverBaseUrl: string;
-  serverAccessToken: string;
+  microsoftTranslatorKey: string;
+  microsoftTranslatorRegion: string;
+  microsoftTranslatorEndpoint: string;
+  googleTranslateApiKey: string;
+  tencentSecretId: string;
+  tencentSecretKey: string;
+  tencentRegion: string;
+  tencentConcurrency: number;
+  llmBaseUrl: string;
+  llmApiKey: string;
+  llmModel: string;
   historyLimit: number;
   offlineDictionary: {
     configured: boolean;
@@ -110,7 +119,8 @@ export interface SentenceAnalysis {
 export type ExtensionMessage =
   | { type: "GET_SETTINGS" }
   | { type: "UPDATE_SETTINGS"; settings: Partial<ExtensionSettings> }
-  | { type: "TRANSLATE"; text: string; provider: TranslationProvider }
+  | { type: "TRANSLATE"; text: string; provider: TranslationProvider; priority?: "current" | "prefetch" }
+  | { type: "TEST_PROVIDER"; provider: TranslationProvider | "llm" }
   | { type: "OPEN_ANALYSIS"; sentence: string }
   | { type: "OPEN_DICTIONARY"; word: string; offline: boolean };
 

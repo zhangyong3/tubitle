@@ -11,6 +11,7 @@ import {
 } from "./shared/offline-dictionary";
 import type { ExtensionSettings, ShortcutSettings, TranslationProvider } from "./shared/types";
 import { selectDictionaryDirectoryFiles } from "./shared/dictionary-directory";
+import { sendMessage } from "./shared/messaging";
 
 const shortcutLabels: Record<keyof ShortcutSettings, string> = {
   previous: "上一句",
@@ -26,6 +27,7 @@ function App() {
   const [saved, setSaved] = useState(false);
   const [dictionaryBusy, setDictionaryBusy] = useState(false);
   const [dictionaryMessage, setDictionaryMessage] = useState("");
+  const [providerMessage, setProviderMessage] = useState("");
   const dictionaryDirectoryInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -35,20 +37,39 @@ function App() {
     });
   }, []);
 
+  async function requestApiPermissions(settings: ExtensionSettings): Promise<boolean> {
+    const origins = [settings.microsoftTranslatorEndpoint, settings.llmBaseUrl].filter(Boolean).map((value) => {
+      const url = new URL(value);
+      return `${url.protocol}//${url.host}/*`;
+    });
+    return origins.length === 0 || chrome.permissions.request({ origins });
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const normalizedUrl = form.serverBaseUrl.trim().replace(/\/+$/, "");
     const normalized = {
       ...form,
-      serverBaseUrl: normalizedUrl,
+      microsoftTranslatorEndpoint: form.microsoftTranslatorEndpoint.trim().replace(/\/+$/, ""),
+      llmBaseUrl: form.llmBaseUrl.trim().replace(/\/+$/, ""),
+      tencentConcurrency: Math.min(5, Math.max(1, Math.round(form.tencentConcurrency) || 3)),
       historyLimit: Math.min(100, Math.max(1, Math.round(form.historyLimit) || DEFAULT_SETTINGS.historyLimit))
     };
-    const serverUrl = new URL(normalized.serverBaseUrl);
-    const granted = await chrome.permissions.request({ origins: [`${serverUrl.protocol}//${serverUrl.hostname}/*`] });
-    if (!granted) return;
+    if (!await requestApiPermissions(normalized)) return;
     setForm(await updateSettings(normalized));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
+  }
+
+  async function testProvider(provider: TranslationProvider | "llm") {
+    setProviderMessage("正在测试连接…");
+    try {
+      if (!await requestApiPermissions(form)) throw new Error("需要先允许访问所配置的 API 域名");
+      await updateSettings(form);
+      await sendMessage({ type: "TEST_PROVIDER", provider });
+      setProviderMessage("连接成功 ✓");
+    } catch (error) {
+      setProviderMessage(error instanceof Error ? error.message : "连接失败");
+    }
   }
 
   function setShortcut(name: keyof ShortcutSettings, value: string) {
@@ -110,7 +131,7 @@ function App() {
   return (
     <main className="page">
       <h1>Tubitle 设置</h1>
-      <p className="lead">个人自托管版本，无账号、会员或使用额度。翻译和大模型密钥仅保存在你的 Next.js 服务中。</p>
+      <p className="lead">纯本地扩展版本。翻译和大模型密钥仅保存在本机浏览器，不经过 Tubitle 服务端，也不会同步到 Chrome 云端。</p>
       <form onSubmit={submit}>
         <section className="card">
           <h2>翻译服务</h2>
@@ -123,16 +144,35 @@ function App() {
                 <option value="tencent">腾讯云机器翻译</option>
               </select>
             </div>
-            <div className="field">
-              <label htmlFor="server">Next.js 服务地址</label>
-              <input id="server" type="url" required value={form.serverBaseUrl} onChange={(event) => setForm({ ...form, serverBaseUrl: event.target.value })} placeholder="https://your-project.vercel.app" />
-            </div>
-            <div className="field">
-              <label htmlFor="server-token">个人访问令牌</label>
-              <input id="server-token" type="password" value={form.serverAccessToken} onChange={(event) => setForm({ ...form, serverAccessToken: event.target.value })} autoComplete="off" />
-              <span className="hint">与 Vercel 中的 PERSONAL_ACCESS_TOKEN 保持一致。</span>
-            </div>
           </div>
+          <h3>腾讯云机器翻译</h3>
+          <div className="grid">
+            <div className="field"><label htmlFor="tencent-id">Secret ID</label><input id="tencent-id" type="password" value={form.tencentSecretId} onChange={(event) => setForm({ ...form, tencentSecretId: event.target.value })} autoComplete="off" /></div>
+            <div className="field"><label htmlFor="tencent-key">Secret Key</label><input id="tencent-key" type="password" value={form.tencentSecretKey} onChange={(event) => setForm({ ...form, tencentSecretKey: event.target.value })} autoComplete="off" /></div>
+            <div className="field"><label htmlFor="tencent-region">地域</label><input id="tencent-region" value={form.tencentRegion} onChange={(event) => setForm({ ...form, tencentRegion: event.target.value })} /></div>
+            <div className="field"><label htmlFor="tencent-concurrency">并发数：{form.tencentConcurrency}</label><input id="tencent-concurrency" type="range" min="1" max="5" value={form.tencentConcurrency} onChange={(event) => setForm({ ...form, tencentConcurrency: Number(event.target.value) })} /></div>
+          </div>
+          <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("tencent")}>测试腾讯云</button></div>
+          <h3>Microsoft Translator</h3>
+          <div className="grid">
+            <div className="field"><label htmlFor="ms-key">Subscription Key</label><input id="ms-key" type="password" value={form.microsoftTranslatorKey} onChange={(event) => setForm({ ...form, microsoftTranslatorKey: event.target.value })} autoComplete="off" /></div>
+            <div className="field"><label htmlFor="ms-region">Region</label><input id="ms-region" value={form.microsoftTranslatorRegion} onChange={(event) => setForm({ ...form, microsoftTranslatorRegion: event.target.value })} /></div>
+            <div className="field full"><label htmlFor="ms-endpoint">Endpoint</label><input id="ms-endpoint" type="url" value={form.microsoftTranslatorEndpoint} onChange={(event) => setForm({ ...form, microsoftTranslatorEndpoint: event.target.value })} /></div>
+          </div>
+          <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("microsoft")}>测试 Microsoft</button></div>
+          <h3>Google Cloud Translation</h3>
+          <div className="grid"><div className="field full"><label htmlFor="google-key">API Key</label><input id="google-key" type="password" value={form.googleTranslateApiKey} onChange={(event) => setForm({ ...form, googleTranslateApiKey: event.target.value })} autoComplete="off" /></div></div>
+          <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("google")}>测试 Google</button></div>
+          {providerMessage && <p className="hint">{providerMessage}</p>}
+        </section>
+        <section className="card">
+          <h2>AI 语句分析</h2>
+          <div className="grid">
+            <div className="field full"><label htmlFor="llm-base">API Base URL</label><input id="llm-base" type="url" value={form.llmBaseUrl} onChange={(event) => setForm({ ...form, llmBaseUrl: event.target.value })} /></div>
+            <div className="field"><label htmlFor="llm-key">API Key</label><input id="llm-key" type="password" value={form.llmApiKey} onChange={(event) => setForm({ ...form, llmApiKey: event.target.value })} autoComplete="off" /></div>
+            <div className="field"><label htmlFor="llm-model">Model</label><input id="llm-model" value={form.llmModel} onChange={(event) => setForm({ ...form, llmModel: event.target.value })} /></div>
+          </div>
+          <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("llm")}>测试大模型</button></div>
         </section>
         <section className="card">
           <h2>字幕交互</h2>

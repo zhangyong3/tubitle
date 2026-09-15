@@ -235,7 +235,8 @@ async function getSentenceTranslation(
   const request = sendMessage<string>({
     type: "TRANSLATE",
     text: sentence.text,
-    provider
+    provider,
+    priority: sentence.id === sentences[activeIndex]?.id ? "current" : "prefetch"
   }).then((translation) => {
     translations.set(key, translation);
     translationErrors.delete(sentence.id);
@@ -481,8 +482,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   void getSettings().then((next) => {
     const connectionChanged =
       settings.provider !== next.provider ||
-      settings.serverBaseUrl !== next.serverBaseUrl ||
-      settings.serverAccessToken !== next.serverAccessToken;
+      settings.microsoftTranslatorKey !== next.microsoftTranslatorKey ||
+      settings.microsoftTranslatorRegion !== next.microsoftTranslatorRegion ||
+      settings.microsoftTranslatorEndpoint !== next.microsoftTranslatorEndpoint ||
+      settings.googleTranslateApiKey !== next.googleTranslateApiKey ||
+      settings.tencentSecretId !== next.tencentSecretId ||
+      settings.tencentSecretKey !== next.tencentSecretKey ||
+      settings.tencentRegion !== next.tencentRegion ||
+      settings.tencentConcurrency !== next.tencentConcurrency;
     if (connectionChanged) {
       translationQueue.length = 0;
       queuedTranslationKeys.clear();
