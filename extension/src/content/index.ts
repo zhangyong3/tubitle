@@ -300,15 +300,9 @@ function prefetchCaptionIndexes(indexes: number[]): void {
     const sentence = sentences[index];
     if (!sentence) continue;
     const official = officialTranslations.get(sentence.id);
-    if (official) {
-      learningPanel.setTranslation(sentence.id, official);
-      continue;
-    }
+    if (official) continue;
     const key = translationKey(sentence, provider);
-    if (translations.has(key)) {
-      learningPanel.setTranslation(sentence.id, translations.get(key));
-      continue;
-    }
+    if (translations.has(key)) continue;
     if (pendingTranslations.has(key) || queuedTranslationKeys.has(key)) continue;
     translationQueue.push({ sentence, provider, key });
     queuedTranslationKeys.add(key);

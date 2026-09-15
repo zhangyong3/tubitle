@@ -429,6 +429,7 @@ function App() {
           snapshot={transcript}
           autoFollow={transcriptAutoFollow}
           onAutoFollowChange={setTranscriptAutoFollow}
+          visible
         />
       </div>
     );
@@ -438,6 +439,12 @@ function App() {
     return (
       <div className="sidepanel-shell">
         {tabs}
+        <TranscriptPage
+          snapshot={transcript}
+          autoFollow={transcriptAutoFollow}
+          onAutoFollowChange={setTranscriptAutoFollow}
+          visible={false}
+        />
         <main className="analysis-page" id="analysis-panel" role="tabpanel" aria-labelledby="analysis-tab">
         <header className="analysis-header">
           <div><div className="brand">Tubitle</div><h1>句子解析</h1></div>
@@ -462,6 +469,12 @@ function App() {
     return (
       <div className="sidepanel-shell">
         {tabs}
+        <TranscriptPage
+          snapshot={transcript}
+          autoFollow={transcriptAutoFollow}
+          onAutoFollowChange={setTranscriptAutoFollow}
+          visible={false}
+        />
         <main className="history-page" id="history-panel" role="tabpanel" aria-labelledby="history-tab">
           <header className="history-header">
             <div><div className="brand">Tubitle</div><h1>历史记录</h1></div>
@@ -494,6 +507,12 @@ function App() {
   return (
     <div className="sidepanel-shell">
       {tabs}
+      <TranscriptPage
+        snapshot={transcript}
+        autoFollow={transcriptAutoFollow}
+        onAutoFollowChange={setTranscriptAutoFollow}
+        visible={false}
+      />
       <main
         className={`page${result?.definition ? " definition-page" : ""}`}
         id="dictionary-panel"
@@ -581,16 +600,18 @@ function SidebarTabs({ activeTab, onSelect }: {
   );
 }
 
-function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange }: {
+function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, visible }: {
   snapshot?: TranscriptPanelSnapshot;
   autoFollow: boolean;
   onAutoFollowChange: (value: boolean) => void;
+  visible: boolean;
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const scrollFrame = useRef<number | undefined>(undefined);
   const activeIndex = snapshot?.activeIndex ?? -1;
 
   function requestVisibleTranslations() {
+    if (!visible) return;
     const list = listRef.current;
     if (!list || !snapshot?.sentences.length) return;
     const bounds = list.getBoundingClientRect();
@@ -605,13 +626,13 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange }: {
   }
 
   useEffect(() => {
-    if (!snapshot) return;
+    if (!snapshot || !visible) return;
     if (autoFollow && activeIndex >= 0) {
       listRef.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     }
     window.setTimeout(requestVisibleTranslations, 0);
-  }, [snapshot?.videoId, snapshot?.sentences.length, activeIndex, autoFollow]);
+  }, [snapshot?.videoId, snapshot?.sentences.length, activeIndex, autoFollow, visible]);
 
   useEffect(() => () => {
     if (scrollFrame.current !== undefined) window.cancelAnimationFrame(scrollFrame.current);
@@ -622,7 +643,13 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange }: {
     : 0;
 
   return (
-    <main className="transcript-page" id="subtitles-panel" role="tabpanel" aria-labelledby="subtitles-tab">
+    <main
+      className="transcript-page"
+      id="subtitles-panel"
+      role="tabpanel"
+      aria-labelledby="subtitles-tab"
+      hidden={!visible}
+    >
       <header className="transcript-header">
         <div className="transcript-heading-copy">
           <div className="brand">Tubitle · 当前视频</div>

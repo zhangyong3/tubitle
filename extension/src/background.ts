@@ -60,6 +60,8 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
   if (existing) return existing;
   const disk = await getCachedTranslation(key).catch(() => undefined);
   if (disk) { memoryCache.set(key, disk); return disk; }
+  const pendingAfterCacheLookup = pending.get(key);
+  if (pendingAfterCacheLookup) return pendingAfterCacheLookup;
   const promise = new Promise<string>((resolve, reject) => {
     const job = { key, text, provider, priority, resolve, reject } satisfies TranslationJob;
     if (priority === "current") queue.unshift(job); else queue.push(job);
