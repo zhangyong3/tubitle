@@ -28,6 +28,14 @@ npm run build
 
 打开 `chrome://extensions`，启用开发者模式，选择“加载已解压的扩展程序”，加载 `extension/dist`。随后打开扩展设置，填写所需服务商密钥并点击测试连接。
 
+生成可分发的 ZIP 安装包：
+
+```bash
+npm run package
+```
+
+命令会先执行生产构建，再生成 `extension/tubitle-v<版本号>.zip`。ZIP 根目录直接包含 `manifest.json`，可用于发布或上传 Chrome 扩展商店。
+
 固定申请的服务域名包括腾讯云、Microsoft 和 Google 翻译。自定义 Microsoft Endpoint 与大模型 Base URL 会在保存时由浏览器请求对应的可选主机权限。
 
 ## 项目结构

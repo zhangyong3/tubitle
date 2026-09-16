@@ -8,6 +8,8 @@
   "scripts": {
     "build": "npm run build:extension",
     "build:extension": "npm run build -w @tubetitle/extension",
+    "package": "npm run package:extension",
+    "package:extension": "npm run build:extension && node scripts/package-extension.mjs",
     "dev:extension": "npm run dev -w @tubetitle/extension",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
