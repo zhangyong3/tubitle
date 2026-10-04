@@ -621,7 +621,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, visible }: {
         return itemBounds.bottom >= bounds.top - 160 && itemBounds.top <= bounds.bottom + 160;
       })
       .map((item) => Number(item.dataset.index))
-      .filter(Number.isInteger);
+      .filter((index) => Number.isInteger(index) && !snapshot.sentences[index]?.translationSkipped);
     if (indexes.length > 0) postToHost({ source: "tubitle-panel", type: "PREFETCH_CAPTIONS", indexes });
   }
 
@@ -714,9 +714,9 @@ const TranscriptCueRow = memo(function TranscriptCueRow({ sentence, index, activ
         <span className="timeline-node" aria-hidden="true">{active ? "▶" : ""}</span>
         <span className="transcript-copy">
           <strong>{sentence.text}</strong>
-          <small className={sentence.translationError ? "translation-error" : ""}>
+          {!sentence.translationSkipped && <small className={sentence.translationError ? "translation-error" : ""}>
             {sentence.translation || sentence.translationError || "正在翻译…"}
-          </small>
+          </small>}
         </span>
       </button>
     </li>

@@ -24,6 +24,8 @@ export interface ExtensionSettings {
   settingsVersion: number;
   enabled: boolean;
   showChinese: boolean;
+  targetLanguage: string;
+  excludedLanguages: string[];
   hoverPause: boolean;
   resumeAfterHover: boolean;
   provider: TranslationProvider;
@@ -80,6 +82,7 @@ export interface CaptionSentence {
 }
 
 export interface TranscriptPanelSentence extends CaptionSentence {
+  translationSkipped?: boolean;
   translation?: string;
   translationError?: string;
 }
@@ -119,7 +122,7 @@ export interface SentenceAnalysis {
 export type ExtensionMessage =
   | { type: "GET_SETTINGS" }
   | { type: "UPDATE_SETTINGS"; settings: Partial<ExtensionSettings> }
-  | { type: "TRANSLATE"; text: string; provider: TranslationProvider; priority?: "current" | "prefetch" }
+  | { type: "TRANSLATE"; text: string; sourceLanguage?: string; provider: TranslationProvider; priority?: "current" | "prefetch" }
   | { type: "TEST_PROVIDER"; provider: TranslationProvider | "llm" }
   | { type: "OPEN_ANALYSIS"; sentence: string }
   | { type: "OPEN_DICTIONARY"; word: string; offline: boolean };

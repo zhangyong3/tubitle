@@ -1,3 +1,4 @@
+import { sourceLanguage, shouldSkipTranslation } from "./shared/languages";
 import { getSettings, updateSettings } from "./shared/settings";
 import type { ExtensionMessage, MessageResponse, TranslationProvider } from "./shared/types";
 import { DICTIONARY_QUERY_KEY } from "./shared/offline-dictionary";
@@ -10,6 +11,7 @@ import { SmoothRateLimit } from "./shared/smooth-rate-limit";
 interface TranslationJob {
   key: string; text: string; provider: TranslationProvider;
   priority: "current" | "prefetch";
+  settings: Awaited<ReturnType<typeof getSettings>>; source: string;
   resolve: (value: string) => void; reject: (error: unknown) => void;
 }
 
@@ -24,8 +26,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "发生未知错误";
 }
 
-function translationKey(provider: TranslationProvider, text: string): string {
-  return `${provider}\0en\0zh-Hans\0${text}`;
+function translationKey(provider: TranslationProvider, text: string, source: string, target: string): string {
+  return `${provider}\0${source || "auto"}\0${target}\0${text}`;
 }
 
 async function waitForTencentSlot(): Promise<void> {
@@ -43,7 +45,7 @@ async function runTranslation(job: TranslationJob, settings: Awaited<ReturnType<
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (job.provider === "tencent") await waitForTencentSlot();
     try {
-      return await translateLocally(job.provider, job.text, settings);
+      return await translateLocally(job.provider, job.text, job.settings, job.source);
     } catch (error) {
       if (!isTencentRateLimit(error) || attempt === attempts - 1) throw error;
       await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
@@ -52,8 +54,11 @@ async function runTranslation(job: TranslationJob, settings: Awaited<ReturnType<
   throw new Error("翻译请求失败");
 }
 
-async function enqueueTranslation(text: string, provider: TranslationProvider, priority: "current" | "prefetch" = "prefetch"): Promise<string> {
-  const key = translationKey(provider, text);
+async function enqueueTranslation(text: string, provider: TranslationProvider, priority: "current" | "prefetch" = "prefetch", trackLanguage = ""): Promise<string> {
+  const settings = await getSettings();
+  const source = sourceLanguage(text, trackLanguage);
+  if (shouldSkipTranslation(source, settings)) return "";
+  const key = translationKey(provider, text, source, settings.targetLanguage);
   const memory = memoryCache.get(key);
   if (memory) return memory;
   const existing = pending.get(key);
@@ -63,7 +68,7 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
   const pendingAfterCacheLookup = pending.get(key);
   if (pendingAfterCacheLookup) return pendingAfterCacheLookup;
   const promise = new Promise<string>((resolve, reject) => {
-    const job = { key, text, provider, priority, resolve, reject } satisfies TranslationJob;
+    const job = { key, text, provider, priority, settings, source, resolve, reject } satisfies TranslationJob;
     if (priority === "current") queue.unshift(job); else queue.push(job);
     void drainTranslationQueue();
   }).finally(() => pending.delete(key));
@@ -94,7 +99,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
       switch (message.type) {
         case "GET_SETTINGS": sendResponse({ ok: true, data: await getSettings() }); break;
         case "UPDATE_SETTINGS": sendResponse({ ok: true, data: await updateSettings(message.settings) }); break;
-        case "TRANSLATE": sendResponse({ ok: true, data: await enqueueTranslation(message.text, message.provider, message.priority) }); break;
+        case "TRANSLATE": sendResponse({ ok: true, data: await enqueueTranslation(message.text, message.provider, message.priority, message.sourceLanguage) }); break;
         case "TEST_PROVIDER": {
           const settings = await getSettings();
           if (message.provider === "llm") {

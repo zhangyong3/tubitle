@@ -1,9 +1,11 @@
 import type { ExtensionSettings } from "./types";
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  settingsVersion: 5,
+  settingsVersion: 6,
   enabled: true,
   showChinese: true,
+  targetLanguage: "zh",
+  excludedLanguages: ["zh"],
   hoverPause: true,
   resumeAfterHover: true,
   provider: "microsoft",

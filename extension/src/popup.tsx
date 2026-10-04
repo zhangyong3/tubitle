@@ -33,8 +33,8 @@ function App() {
         <button className={`toggle ${settings.enabled ? "on" : ""}`} onClick={() => void patch({ enabled: !settings.enabled })} aria-label="启用字幕插件"><span /></button>
       </div>
       <div className="row">
-        <span>显示中文翻译</span>
-        <button className={`toggle ${settings.showChinese ? "on" : ""}`} onClick={() => void patch({ showChinese: !settings.showChinese })} aria-label="显示中文翻译"><span /></button>
+        <span>显示翻译</span>
+        <button className={`toggle ${settings.showChinese ? "on" : ""}`} onClick={() => void patch({ showChinese: !settings.showChinese })} aria-label="显示翻译"><span /></button>
       </div>
       <div className="row">
         <label htmlFor="provider">翻译引擎</label>

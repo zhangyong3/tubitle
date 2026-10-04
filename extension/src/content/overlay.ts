@@ -95,6 +95,11 @@ export class SubtitleOverlay {
     this.host.style.display = enabled ? "block" : "none";
   }
 
+  setCaptionsVisible(visible: boolean): void {
+    // Keep the active sentence and translation so toggling CC restores them immediately.
+    this.caption.style.display = visible ? "" : "none";
+  }
+
   setChineseVisible(visible: boolean): void {
     this.chineseVisible = visible;
     this.chinese.classList.toggle("hidden", !visible);

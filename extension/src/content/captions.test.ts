@@ -85,3 +85,23 @@ describe("cuesToSentences", () => {
     expect(result.map((item) => item.text)).toEqual(["Welcome & hello.", "Let's go!"]);
   });
 });
+
+ describe("configurable caption languages", () => {
+  it("keeps Chinese source captions without fetching a duplicate translation", async () => {
+    const { fetchBilingualCaptions } = await import("./captions");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: "这是中文字幕。" }] }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await fetchBilingualCaptions([{ baseUrl: "https://www.youtube.com/api/timedtext", languageCode: "zh-Hans", name: "中文" }]);
+    expect(result.sourceLanguage).toBe("zh-Hans");
+    expect(result.sentences[0]?.text).toBe("这是中文字幕。");
+    expect(result.officialTranslations.size).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("uses the configured official target track", async () => {
+    const { fetchBilingualCaptions } = await import("./captions");
+    const { DEFAULT_SETTINGS } = await import("../shared/settings");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: url.includes("lang=fr") ? "Bonjour." : "Hello." }] }] }))));
+    const result = await fetchBilingualCaptions(["en", "fr", "zh"].map((languageCode) => ({ baseUrl: `https://www.youtube.com/api/timedtext?lang=${languageCode}`, languageCode, name: languageCode })), { ...DEFAULT_SETTINGS, targetLanguage: "fr" });
+    expect([...result.officialTranslations.values()]).toEqual(["Bonjour."]);
+  });
+});

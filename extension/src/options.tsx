@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
+import { LANGUAGES } from "./shared/languages";
 import { DEFAULT_SETTINGS, getSettings, updateSettings } from "./shared/settings";
 import {
   removeOfflineDictionary,
@@ -17,7 +18,7 @@ const shortcutLabels: Record<keyof ShortcutSettings, string> = {
   previous: "上一句",
   next: "下一句",
   repeat: "重复当前句",
-  toggleTranslation: "显示/隐藏中文",
+  toggleTranslation: "显示/隐藏翻译",
   analyze: "解析当前句"
 };
 
@@ -175,9 +176,21 @@ function App() {
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("llm")}>测试大模型</button></div>
         </section>
         <section className="card">
+          <h2>翻译语言</h2>
+          <div className="field"><label htmlFor="target-language">目标语言</label>
+            <select id="target-language" value={form.targetLanguage} onChange={(event) => setForm({ ...form, targetLanguage: event.target.value })}>
+              {LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+            </select>
+          </div>
+          <fieldset><legend>不需要翻译的语言（多选）</legend><div className="grid">
+            {LANGUAGES.filter(([code]) => code !== "zh-TW").map(([code, label]) => <label key={code}>
+              <input type="checkbox" checked={form.excludedLanguages.includes(code)} onChange={(event) => setForm({ ...form, excludedLanguages: event.target.checked ? [...form.excludedLanguages, code] : form.excludedLanguages.filter((item) => item !== code) })} /> {code === "zh" ? "中文（简体及繁体）" : label}
+            </label>)}
+          </div></fieldset>
+          <p className="hint">所选语言及与目标语言相同的字幕只显示原文，不请求翻译。</p>
           <h2>字幕交互</h2>
           <div className="grid">
-            <label><input type="checkbox" checked={form.showChinese} onChange={(event) => setForm({ ...form, showChinese: event.target.checked })} /> 默认显示中文翻译</label>
+            <label><input type="checkbox" checked={form.showChinese} onChange={(event) => setForm({ ...form, showChinese: event.target.checked })} /> 默认显示翻译</label>
             <label><input type="checkbox" checked={form.hoverPause} onChange={(event) => setForm({ ...form, hoverPause: event.target.checked })} /> 悬停字幕时暂停</label>
             <label><input type="checkbox" checked={form.resumeAfterHover} onChange={(event) => setForm({ ...form, resumeAfterHover: event.target.checked })} /> 离开后恢复播放</label>
           </div>
@@ -186,19 +199,19 @@ function App() {
           <h2>字幕样式</h2>
           <div className="grid">
             <div className="field">
-              <label htmlFor="english-size">英文字号：{form.subtitleAppearance.englishFontSize}px</label>
+              <label htmlFor="english-size">原文字号：{form.subtitleAppearance.englishFontSize}px</label>
               <input id="english-size" type="range" min="14" max="48" value={form.subtitleAppearance.englishFontSize} onChange={(event) => setForm({ ...form, subtitleAppearance: { ...form.subtitleAppearance, englishFontSize: Number(event.target.value) } })} />
             </div>
             <div className="field">
-              <label htmlFor="chinese-size">中文字号：{form.subtitleAppearance.chineseFontSize}px</label>
+              <label htmlFor="chinese-size">译文字号：{form.subtitleAppearance.chineseFontSize}px</label>
               <input id="chinese-size" type="range" min="12" max="42" value={form.subtitleAppearance.chineseFontSize} onChange={(event) => setForm({ ...form, subtitleAppearance: { ...form.subtitleAppearance, chineseFontSize: Number(event.target.value) } })} />
             </div>
             <div className="field">
-              <label htmlFor="english-color">英文颜色</label>
+              <label htmlFor="english-color">原文颜色</label>
               <input id="english-color" type="color" value={form.subtitleAppearance.englishColor} onChange={(event) => setForm({ ...form, subtitleAppearance: { ...form.subtitleAppearance, englishColor: event.target.value } })} />
             </div>
             <div className="field">
-              <label htmlFor="chinese-color">中文颜色</label>
+              <label htmlFor="chinese-color">译文颜色</label>
               <input id="chinese-color" type="color" value={form.subtitleAppearance.chineseColor} onChange={(event) => setForm({ ...form, subtitleAppearance: { ...form.subtitleAppearance, chineseColor: event.target.value } })} />
             </div>
           </div>

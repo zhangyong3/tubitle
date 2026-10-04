@@ -1,3 +1,4 @@
+import { sourceLanguage, shouldSkipTranslation } from "../shared/languages";
 import { fetchBilingualCaptions } from "./captions";
 import { PageLearningPanel } from "./learning-panel";
 import { SubtitleOverlay } from "./overlay";
@@ -21,9 +22,12 @@ import { cuesToSentences } from "./captions";
 let settings: ExtensionSettings;
 let sentences: CaptionSentence[] = [];
 let activeIndex = -1;
+let captionLanguage = "";
+let latestTracks: CaptionTrack[] = [];
 let loadVersion = 0;
 let pausedByHover = false;
 let lastLayoutUpdate = 0;
+let captionsVisible: boolean | undefined;
 let panelLayoutFrame: number | undefined;
 let unavailableSubtitleTimer: number | undefined;
 let transcriptLoading = false;
@@ -65,6 +69,7 @@ function transcriptSnapshot(video = videoElement()): TranscriptPanelSnapshot {
     videoTitle: currentVideoTitle(),
     sentences: sentences.map((sentence) => ({
       ...sentence,
+      translationSkipped: skipSentenceTranslation(sentence),
       translation: officialTranslations.get(sentence.id) || translations.get(translationKey(sentence, settings.provider)),
       translationError: translationErrors.get(sentence.id)
     })),
@@ -153,6 +158,8 @@ function requestTranscript(videoId: string): Promise<TranscriptCue[]> {
 }
 
 async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Promise<void> {
+  latestTracks = tracks;
+  captionLanguage = "";
   const version = ++loadVersion;
   window.clearTimeout(unavailableSubtitleTimer);
   unavailableSubtitleTimer = undefined;
@@ -173,7 +180,7 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
   try {
     let loaded;
     try {
-      loaded = await fetchBilingualCaptions(tracks);
+      loaded = await fetchBilingualCaptions(tracks, settings);
     } catch (captionError) {
       const videoId = new URL(pageUrl).searchParams.get("v");
       if (!videoId) throw captionError;
@@ -181,7 +188,7 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
         const transcript = await requestTranscript(videoId);
         const fallbackSentences = cuesToSentences(transcript);
         if (fallbackSentences.length === 0) throw new Error("YouTube 文字稿为空");
-        loaded = { sentences: fallbackSentences, officialTranslations: new Map<string, string>() };
+        loaded = { sentences: fallbackSentences, officialTranslations: new Map<string, string>(), sourceLanguage: "" };
       } catch (transcriptError) {
         const primary = errorMessage(captionError);
         if (primary === "这个视频没有可用的英文字幕" || primary === "字幕轨道为空") {
@@ -192,8 +199,12 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
       }
     }
     if (version !== loadVersion) return;
+    captionLanguage = loaded.sourceLanguage ?? "";
     sentences = loaded.sentences;
-    for (const [id, translation] of loaded.officialTranslations) officialTranslations.set(id, translation);
+    for (const [id, translation] of loaded.officialTranslations) {
+      const sentence = sentences.find((item) => item.id === id);
+      if (sentence && !shouldSkipTranslation(sourceLanguage(sentence.text, captionLanguage), settings)) officialTranslations.set(id, translation);
+    }
     transcriptLoading = false;
     applySettings();
     overlay.clearStatus();
@@ -216,14 +227,21 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
   }
 }
 
+function skipSentenceTranslation(sentence: CaptionSentence): boolean {
+  return shouldSkipTranslation(sourceLanguage(sentence.text, captionLanguage), settings);
+}
+
 function translationKey(sentence: CaptionSentence, provider: ExtensionSettings["provider"]): string {
-  return `${loadVersion}:${provider}:${sentence.id}`;
+  return `${loadVersion}:${provider}:${settings.targetLanguage}:${sentence.id}`;
 }
 
 async function getSentenceTranslation(
   sentence: CaptionSentence,
   provider: ExtensionSettings["provider"]
 ): Promise<string> {
+  if (skipSentenceTranslation(sentence)) return "";
+  const version = loadVersion;
+  const target = settings.targetLanguage;
   const official = officialTranslations.get(sentence.id);
   if (official) return official;
   const key = translationKey(sentence, provider);
@@ -235,9 +253,11 @@ async function getSentenceTranslation(
   const request = sendMessage<string>({
     type: "TRANSLATE",
     text: sentence.text,
+    sourceLanguage: sourceLanguage(sentence.text, captionLanguage),
     provider,
     priority: sentence.id === sentences[activeIndex]?.id ? "current" : "prefetch"
   }).then((translation) => {
+    if (version !== loadVersion || target !== settings.targetLanguage) return "";
     translations.set(key, translation);
     translationErrors.delete(sentence.id);
     learningPanel.setTranslation(sentence.id, translation);
@@ -250,15 +270,23 @@ async function getSentenceTranslation(
 }
 
 async function translateSentence(sentence: CaptionSentence): Promise<void> {
+  if (skipSentenceTranslation(sentence)) {
+    overlay.showTranslation(sentence.id, "");
+    return;
+  }
   const provider = settings.provider;
+  const version = loadVersion;
+  const target = settings.targetLanguage;
   try {
     const translation = await getSentenceTranslation(sentence, provider);
+    if (version !== loadVersion || target !== settings.targetLanguage) return;
     translationErrors.delete(sentence.id);
     learningPanel.setTranslation(sentence.id, translation);
     if (settings.showChinese && (provider === settings.provider || officialTranslations.has(sentence.id))) {
       overlay.showTranslation(sentence.id, translation);
     }
   } catch (error) {
+    if (version !== loadVersion || target !== settings.targetLanguage) return;
     const message = errorMessage(error);
     translationErrors.set(sentence.id, message);
     learningPanel.setTranslation(sentence.id, undefined, message);
@@ -280,6 +308,7 @@ function scheduleTranslationPrefetch(currentIndex: number): void {
   const indexes = plan.indexes;
   for (const index of indexes) {
     const sentence = sentences[index]!;
+    if (skipSentenceTranslation(sentence)) continue;
     const key = translationKey(sentence, provider);
     if (
       officialTranslations.has(sentence.id) ||
@@ -298,7 +327,7 @@ function prefetchCaptionIndexes(indexes: number[]): void {
   if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
   for (const index of new Set(indexes)) {
     const sentence = sentences[index];
-    if (!sentence) continue;
+    if (!sentence || skipSentenceTranslation(sentence)) continue;
     const official = officialTranslations.get(sentence.id);
     if (official) continue;
     const key = translationKey(sentence, provider);
@@ -314,7 +343,7 @@ function drainTranslationQueue(): void {
   while (activeTranslationWorkers < MAX_TRANSLATION_WORKERS && translationQueue.length > 0) {
     const item = translationQueue.shift()!;
     queuedTranslationKeys.delete(item.key);
-    if ((prefetchBlockedUntil.get(item.provider) ?? 0) > Date.now()) continue;
+    if (skipSentenceTranslation(item.sentence) || (prefetchBlockedUntil.get(item.provider) ?? 0) > Date.now()) continue;
     activeTranslationWorkers += 1;
     void getSentenceTranslation(item.sentence, item.provider)
       .catch((error: unknown) => {
@@ -437,11 +466,25 @@ function schedulePanelLayoutUpdate(): void {
   });
 }
 
+function syncYouTubeCaptionVisibility(): void {
+  const button = document.querySelector<HTMLButtonElement>("#movie_player .ytp-subtitles-button");
+  // Some transcript-only videos have no native CC control; retain their subtitles.
+  const visible = button?.getAttribute("aria-pressed") !== "false";
+  if (captionsVisible === visible) return;
+  captionsVisible = visible;
+  overlay.setCaptionsVisible(visible);
+  if (!visible && pausedByHover) {
+    pausedByHover = false;
+    if (settings.resumeAfterHover) void videoElement()?.play().catch(() => undefined);
+  }
+}
+
 function tick(timestamp: number): void {
   const video = videoElement();
   const panelVisible = Boolean(settings?.enabled && video && isWatchPage() && !document.fullscreenElement);
   learningPanel.setVisible(panelVisible);
   if (settings?.enabled) {
+    syncYouTubeCaptionVisibility();
     if (video) {
       if (timestamp - lastLayoutUpdate >= 200) {
         const fullscreenParent = document.fullscreenElement;
@@ -474,6 +517,7 @@ window.addEventListener("resize", schedulePanelLayoutUpdate, { passive: true });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes.settings) return;
   void getSettings().then((next) => {
+    const languagesChanged = settings.targetLanguage !== next.targetLanguage || JSON.stringify(settings.excludedLanguages) !== JSON.stringify(next.excludedLanguages);
     const connectionChanged =
       settings.provider !== next.provider ||
       settings.microsoftTranslatorKey !== next.microsoftTranslatorKey ||
@@ -492,6 +536,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       translationErrors.clear();
     }
     settings = next;
+    if (languagesChanged) { void loadTracks(latestTracks); return; }
     applySettings();
     publishTranscriptSnapshot();
     if (connectionChanged && activeIndex >= 0) scheduleTranslationPrefetch(activeIndex);

@@ -1,3 +1,6 @@
+import { languageFamily, shouldSkipTranslation } from "../shared/languages";
+import { DEFAULT_SETTINGS } from "../shared/settings";
+import type { ExtensionSettings } from "../shared/types";
 import type { CaptionSentence, CaptionTrack } from "../shared/types";
 
 interface Json3Segment {
@@ -21,6 +24,7 @@ interface CaptionCue {
 }
 
 export interface BilingualCaptions {
+  sourceLanguage?: string;
   sentences: CaptionSentence[];
   officialTranslations: Map<string, string>;
 }
@@ -207,27 +211,33 @@ export async function fetchEnglishSentences(
   return sentences;
 }
 
-export async function fetchBilingualCaptions(tracks: CaptionTrack[]): Promise<BilingualCaptions> {
-  const sentences = await fetchEnglishSentences(tracks);
-  const chineseTracks = tracks.filter((track) => /^zh(?:-|$)/i.test(track.languageCode));
-  const chinese =
-    chineseTracks.find((track) => /^(zh-Hans|zh-CN)$/i.test(track.languageCode) && track.kind !== "asr") ??
-    chineseTracks.find((track) => track.kind !== "asr") ??
-    chineseTracks[0];
-  const officialTranslations = new Map<string, string>();
-  if (!chinese) return { sentences, officialTranslations };
+export function selectSourceTrack(tracks: CaptionTrack[]): CaptionTrack | undefined {
+  const english = tracks.filter((track) => /^en(?:-|$)/i.test(track.languageCode));
+  return english.find((track) => track.kind !== "asr") ?? english[0] ?? tracks.find((track) => track.kind === "asr") ?? tracks[0];
+}
 
+export async function fetchBilingualCaptions(tracks: CaptionTrack[], settings: ExtensionSettings = DEFAULT_SETTINGS): Promise<BilingualCaptions> {
+  const source = selectSourceTrack(tracks);
+  if (!source) throw new Error("这个视频没有可用的字幕");
+  const sentences = cuesToSentences(await fetchTrackCues(source));
+  if (!sentences.length) throw new Error("字幕轨道为空");
+  const officialTranslations = new Map<string, string>();
+  const result = { sentences, officialTranslations, sourceLanguage: source.languageCode };
+  if (shouldSkipTranslation(source.languageCode, settings)) return result;
+  const targets = tracks.filter((track) => languageFamily(track.languageCode) === languageFamily(settings.targetLanguage));
+  const traditional = /(?:tw|hant|hk)/i.test(settings.targetLanguage);
+  const matching = targets.filter((track) => languageFamily(settings.targetLanguage) !== "zh" || /(?:tw|hant|hk)/i.test(track.languageCode) === traditional);
+  const target = matching.find((track) => track.kind !== "asr") ?? matching[0];
+  if (!target) return result;
   try {
-    const chineseSentences = cuesToSentences(await fetchTrackCues(chinese));
+    const translated = cuesToSentences(await fetchTrackCues(target));
     for (const sentence of sentences) {
-      const matches = chineseSentences.filter(
-        (candidate) => candidate.startMs < sentence.endMs + 400 && candidate.endMs > sentence.startMs - 400
-      );
+      const matches = translated.filter((candidate) => candidate.startMs < sentence.endMs + 400 && candidate.endMs > sentence.startMs - 400);
       const text = matches.map((candidate) => candidate.text).join(" ").replace(/\s+/g, " ").trim();
       if (text) officialTranslations.set(sentence.id, text);
     }
   } catch {
-    // A broken optional Chinese track should not prevent the English track from working.
+    // An optional target track must not prevent the source captions from working.
   }
-  return { sentences, officialTranslations };
+  return result;
 }

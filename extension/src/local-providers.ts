@@ -1,3 +1,4 @@
+import { providerLanguage } from "./shared/languages";
 import type { ExtensionSettings, TranslationProvider } from "./shared/types";
 
 const tencentHost = "tmt.tencentcloudapi.com";
@@ -21,13 +22,13 @@ function decodeHtml(value: string): string {
     .replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
 
-async function microsoft(text: string, settings: ExtensionSettings): Promise<string> {
+async function microsoft(text: string, settings: ExtensionSettings, source = ""): Promise<string> {
   const key = required(settings.microsoftTranslatorKey, "请先配置 Microsoft Translator Key");
   const endpoint = required(settings.microsoftTranslatorEndpoint, "请先配置 Microsoft Translator Endpoint").replace(/\/+$/, "");
   const url = new URL(`${endpoint}/translate`);
   url.searchParams.set("api-version", "3.0");
-  url.searchParams.set("from", "en");
-  url.searchParams.set("to", "zh-Hans");
+  if (source) url.searchParams.set("from", providerLanguage(source, "microsoft"));
+  url.searchParams.set("to", providerLanguage(settings.targetLanguage, "microsoft"));
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -46,14 +47,14 @@ async function microsoft(text: string, settings: ExtensionSettings): Promise<str
   return result;
 }
 
-async function google(text: string, settings: ExtensionSettings): Promise<string> {
+async function google(text: string, settings: ExtensionSettings, source = ""): Promise<string> {
   const key = required(settings.googleTranslateApiKey, "请先配置 Google Translation API Key");
   const url = new URL("https://translation.googleapis.com/language/translate/v2");
   url.searchParams.set("key", key);
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q: [text], source: "en", target: "zh-CN", format: "text" }),
+    body: JSON.stringify({ q: [text], ...(source ? { source: providerLanguage(source, "google") } : {}), target: providerLanguage(settings.targetLanguage, "google"), format: "text" }),
     signal: AbortSignal.timeout(15_000)
   });
   const payload = await responseJson(response, "Google 翻译") as { data?: { translations?: Array<{ translatedText?: string }> } };
@@ -74,10 +75,10 @@ async function hmac(key: ArrayBuffer | Uint8Array | string, value: string): Prom
   return crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(value));
 }
 
-async function tencent(text: string, settings: ExtensionSettings): Promise<string> {
+async function tencent(text: string, settings: ExtensionSettings, source = ""): Promise<string> {
   const secretId = required(settings.tencentSecretId, "请先配置腾讯云 Secret ID");
   const secretKey = required(settings.tencentSecretKey, "请先配置腾讯云 Secret Key");
-  const body = JSON.stringify({ SourceText: text, Source: "en", Target: "zh", ProjectId: 0 });
+  const body = JSON.stringify({ SourceText: text, Source: source ? providerLanguage(source, "tencent") : "auto", Target: providerLanguage(settings.targetLanguage, "tencent"), ProjectId: 0 });
   const now = new Date();
   const timestamp = Math.floor(now.getTime() / 1000);
   const date = now.toISOString().slice(0, 10);
@@ -118,10 +119,10 @@ async function tencent(text: string, settings: ExtensionSettings): Promise<strin
   return payload.Response.TargetText;
 }
 
-export function translateLocally(provider: TranslationProvider, text: string, settings: ExtensionSettings): Promise<string> {
-  if (provider === "microsoft") return microsoft(text, settings);
-  if (provider === "google") return google(text, settings);
-  return tencent(text, settings);
+export function translateLocally(provider: TranslationProvider, text: string, settings: ExtensionSettings, source = ""): Promise<string> {
+  if (provider === "microsoft") return microsoft(text, settings, source);
+  if (provider === "google") return google(text, settings, source);
+  return tencent(text, settings, source);
 }
 
 const ANALYSIS_PROMPT = `你是一位严谨、简洁的英语教师。请用中文分析用户给出的英文句子。
