@@ -1,3 +1,4 @@
+import { captionErrorNotice, CAPTION_NOTICE_DURATION_MS } from "./caption-errors";
 import { sourceLanguage, shouldSkipTranslation } from "../shared/languages";
 import { fetchBilingualCaptions } from "./captions";
 import { PageLearningPanel } from "./learning-panel";
@@ -191,9 +192,6 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
         loaded = { sentences: fallbackSentences, officialTranslations: new Map<string, string>(), sourceLanguage: "" };
       } catch (transcriptError) {
         const primary = errorMessage(captionError);
-        if (primary === "这个视频没有可用的英文字幕" || primary === "字幕轨道为空") {
-          throw new Error("没有可用的英文字幕");
-        }
         const fallback = errorMessage(transcriptError);
         throw new Error(`${primary}；文字稿回退失败：${fallback}`);
       }
@@ -211,19 +209,19 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
     publishTranscriptSnapshot();
   } catch (error) {
     if (version !== loadVersion) return;
-    const message = errorMessage(error);
+    const detail = errorMessage(error);
+    console.warn("[Tubetitle] 字幕加载失败", { videoUrl: pageUrl, detail, error });
+    const notice = captionErrorNotice(detail);
     transcriptLoading = false;
-    transcriptError = message;
-    overlay.showStatus(message, true);
+    transcriptError = notice;
+    overlay.showStatus(notice, true);
     publishTranscriptSnapshot();
-    if (message === "没有可用的英文字幕") {
-      unavailableSubtitleTimer = window.setTimeout(() => {
-        if (version !== loadVersion) return;
-        overlay.clearStatus();
-        overlay.hideSentence();
-        unavailableSubtitleTimer = undefined;
-      }, 3000);
-    }
+    unavailableSubtitleTimer = window.setTimeout(() => {
+      if (version !== loadVersion) return;
+      overlay.clearStatus();
+      overlay.hideSentence();
+      unavailableSubtitleTimer = undefined;
+    }, CAPTION_NOTICE_DURATION_MS);
   }
 }
 
