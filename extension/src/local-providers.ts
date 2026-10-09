@@ -1,3 +1,4 @@
+import { decodeTextEntities } from "./shared/text-entities";
 import { providerLanguage } from "./shared/languages";
 import type { ExtensionSettings, TranslationProvider } from "./shared/types";
 
@@ -6,7 +7,7 @@ const tencentHost = "tmt.tencentcloudapi.com";
 function required(value: string, message: string): string {
   const result = value.trim();
   if (!result) throw new Error(message);
-  return result;
+  return decodeTextEntities(result);
 }
 
 async function responseJson(response: Response, label: string): Promise<unknown> {
@@ -15,11 +16,6 @@ async function responseJson(response: Response, label: string): Promise<unknown>
     throw new Error(`${label}请求失败（${response.status}）${detail ? `：${detail}` : ""}`);
   }
   return response.json();
-}
-
-function decodeHtml(value: string): string {
-  return value.replaceAll("&quot;", "\"").replaceAll("&#39;", "'")
-    .replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
 
 async function microsoft(text: string, settings: ExtensionSettings, source = ""): Promise<string> {
@@ -44,7 +40,7 @@ async function microsoft(text: string, settings: ExtensionSettings, source = "")
   const payload = await responseJson(response, "Microsoft 翻译") as Array<{ translations?: Array<{ text?: string }> }>;
   const result = payload[0]?.translations?.[0]?.text;
   if (!result) throw new Error("Microsoft 翻译返回的数据不完整");
-  return result;
+  return decodeTextEntities(result);
 }
 
 async function google(text: string, settings: ExtensionSettings, source = ""): Promise<string> {
@@ -60,7 +56,7 @@ async function google(text: string, settings: ExtensionSettings, source = ""): P
   const payload = await responseJson(response, "Google 翻译") as { data?: { translations?: Array<{ translatedText?: string }> } };
   const result = payload.data?.translations?.[0]?.translatedText;
   if (!result) throw new Error("Google 翻译返回的数据不完整");
-  return decodeHtml(result);
+  return decodeTextEntities(result);
 }
 
 async function sha256(value: string): Promise<string> {
@@ -116,7 +112,7 @@ async function tencent(text: string, settings: ExtensionSettings, source = ""): 
     throw new Error(`腾讯翻译失败：${message ?? code ?? "未知错误"}`);
   }
   if (!payload.Response?.TargetText) throw new Error("腾讯翻译返回的数据不完整");
-  return payload.Response.TargetText;
+  return decodeTextEntities(payload.Response.TargetText);
 }
 
 export function translateLocally(provider: TranslationProvider, text: string, settings: ExtensionSettings, source = ""): Promise<string> {

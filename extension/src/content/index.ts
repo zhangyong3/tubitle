@@ -1,3 +1,4 @@
+import { decodeTextEntities } from "../shared/text-entities";
 import { captionErrorNotice, CAPTION_NOTICE_DURATION_MS } from "./caption-errors";
 import { sourceLanguage, shouldSkipTranslation } from "../shared/languages";
 import { fetchBilingualCaptions } from "./captions";
@@ -256,6 +257,7 @@ async function getSentenceTranslation(
     priority: sentence.id === sentences[activeIndex]?.id ? "current" : "prefetch"
   }).then((translation) => {
     if (version !== loadVersion || target !== settings.targetLanguage) return "";
+    translation = decodeTextEntities(translation);
     translations.set(key, translation);
     translationErrors.delete(sentence.id);
     learningPanel.setTranslation(sentence.id, translation);

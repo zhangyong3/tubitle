@@ -1,3 +1,4 @@
+import { decodeTextEntities } from "../shared/text-entities";
 import { languageFamily, shouldSkipTranslation } from "../shared/languages";
 import { DEFAULT_SETTINGS } from "../shared/settings";
 import type { ExtensionSettings } from "../shared/types";
@@ -30,7 +31,7 @@ export interface BilingualCaptions {
 }
 
 function normalizeText(text: string): string {
-  return text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+  return decodeTextEntities(text).replace(/\n/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function removeOverlap(previous: string, next: string): string {
@@ -141,16 +142,7 @@ function json3Cues(body: string): CaptionCue[] | undefined {
 }
 
 function decodeXmlText(value: string): string {
-  return value
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([\da-f]+);/gi, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
+  return decodeTextEntities(value.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""));
 }
 
 function attribute(value: string, name: string): string | undefined {
