@@ -4,6 +4,20 @@ import type { ExtensionSettings, TranslationProvider } from "./shared/types";
 
 const tencentHost = "tmt.tencentcloudapi.com";
 
+export class MicrosoftRateLimitError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super("Microsoft 翻译请求过于频繁，请稍后重试（429）");
+  }
+}
+
+function retryAfterMs(header: string | null): number {
+  const value = header?.trim();
+  if (!value) return 0;
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? 0 : Math.max(0, date - Date.now());
+}
+
 function required(value: string, message: string): string {
   const result = value.trim();
   if (!result) throw new Error(message);
@@ -37,6 +51,10 @@ async function microsoft(text: string, settings: ExtensionSettings, source = "")
     body: JSON.stringify([{ text }]),
     signal: AbortSignal.timeout(15_000)
   });
+  if (response.status === 429) {
+    void response.body?.cancel().catch(() => undefined);
+    throw new MicrosoftRateLimitError(retryAfterMs(response.headers.get("Retry-After")));
+  }
   const payload = await responseJson(response, "Microsoft 翻译") as Array<{ translations?: Array<{ text?: string }> }>;
   const result = payload[0]?.translations?.[0]?.text;
   if (!result) throw new Error("Microsoft 翻译返回的数据不完整");

@@ -7,7 +7,9 @@ export function normalizeDictionaryWord(value: string): string {
   return value
     .normalize("NFKC")
     .replace(/[‘’]/g, "'")
-    .replace(/[^\p{L}'-]/gu, "")
+    .replace(/[^\p{L}'\s-]/gu, "")
+    .trim()
+    .replace(/\s+/gu, " ")
     .replace(/^['-]+|['-]+$/g, "")
     .toLowerCase();
 }

@@ -18,13 +18,6 @@ interface DictionaryResourceRecord {
   files: Array<Omit<DictionaryRecord, "id">>;
 }
 
-export interface DictionaryQuery {
-  word: string;
-  requestId: string;
-  createdAt: number;
-}
-
-export const DICTIONARY_QUERY_KEY = "offlineDictionaryQuery";
 const DATABASE_NAME = "tubetitle-offline-dictionary";
 const STORE_NAME = "files";
 

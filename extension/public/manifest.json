@@ -10,7 +10,8 @@
     "https://*.googlevideo.com/*",
     "https://tmt.tencentcloudapi.com/*",
     "https://api.cognitive.microsofttranslator.com/*",
-    "https://translation.googleapis.com/*"
+    "https://translation.googleapis.com/*",
+    "https://en-word.net/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": {

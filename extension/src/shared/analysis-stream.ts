@@ -4,6 +4,8 @@ export interface AnalysisQuery {
   sentence: string;
   requestId: string;
   createdAt: number;
+  videoId?: string;
+  startMs?: number;
 }
 
 export async function streamSentenceAnalysis(

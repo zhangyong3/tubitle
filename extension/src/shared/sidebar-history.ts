@@ -1,4 +1,6 @@
 import type { AnalysisQuery } from "./analysis-stream";
+import { normalizeDictionaryWord } from "./dictionary-lookup";
+import type { WordNetSense } from "./wordnet";
 
 export const SIDEBAR_HISTORY_KEY = "sidebarHistory";
 export const DEFAULT_HISTORY_LIMIT = 20;
@@ -11,6 +13,9 @@ interface HistoryBase {
 export interface DictionaryHistoryEntry extends HistoryBase {
   type: "dictionary";
   word: string;
+  // Older installations saved MDX excerpts here. They are never exported.
+  definitionNote?: string;
+  wordNet?: WordNetSense[];
 }
 
 export interface AnalysisHistoryEntry extends HistoryBase {
@@ -18,9 +23,19 @@ export interface AnalysisHistoryEntry extends HistoryBase {
   requestId: string;
   sentence: string;
   result: string;
+  videoId?: string;
+  startMs?: number;
 }
 
-export type SidebarHistoryEntry = DictionaryHistoryEntry | AnalysisHistoryEntry;
+export interface TranslationHistoryEntry extends HistoryBase {
+  type: "translation";
+  videoId: string;
+  startMs: number;
+  sentence: string;
+  result: string;
+}
+
+export type SidebarHistoryEntry = DictionaryHistoryEntry | AnalysisHistoryEntry | TranslationHistoryEntry;
 
 let writeQueue: Promise<void> = Promise.resolve();
 
@@ -31,8 +46,8 @@ export function parseSidebarHistory(value: unknown): SidebarHistoryEntry[] {
     const item = entry as Record<string, unknown>;
     if (typeof item.id !== "string" || typeof item.createdAt !== "number") return false;
     if (item.type === "dictionary") return typeof item.word === "string" && Boolean(item.word.trim());
-    return item.type === "analysis" &&
-      typeof item.requestId === "string" &&
+    return ((item.type === "analysis" && typeof item.requestId === "string") ||
+      (item.type === "translation" && typeof item.videoId === "string" && Number.isFinite(item.startMs))) &&
       typeof item.sentence === "string" &&
       typeof item.result === "string" &&
       Boolean(item.sentence.trim()) &&
@@ -44,9 +59,10 @@ export function trimSidebarHistory(entries: SidebarHistoryEntry[], requestedLimi
   const limit = Math.min(100, Math.max(1, Math.round(requestedLimit) || DEFAULT_HISTORY_LIMIT));
   let dictionaries = 0;
   let analyses = 0;
+  let translations = 0;
   return [...entries].sort((left, right) => right.createdAt - left.createdAt).filter((entry) => {
     if (entry.type === "dictionary") return ++dictionaries <= limit;
-    return ++analyses <= limit;
+    return entry.type === "analysis" ? ++analyses <= limit : ++translations <= limit;
   });
 }
 
@@ -56,7 +72,7 @@ export async function getSidebarHistory(): Promise<SidebarHistoryEntry[]> {
 }
 
 export function recordDictionaryHistory(word: string, limit: number): Promise<SidebarHistoryEntry[]> {
-  const normalized = word.trim();
+  const normalized = normalizeDictionaryWord(word);
   if (!normalized) return getSidebarHistory();
   const entry: DictionaryHistoryEntry = {
     type: "dictionary",
@@ -65,8 +81,9 @@ export function recordDictionaryHistory(word: string, limit: number): Promise<Si
     createdAt: Date.now()
   };
   return writeHistory((current) => [
-    entry,
-    ...current.filter((item) => item.type !== "dictionary" || item.word.toLocaleLowerCase() !== normalized.toLocaleLowerCase())
+    { ...entry, wordNet: current.find((item): item is DictionaryHistoryEntry =>
+      item.type === "dictionary" && normalizeDictionaryWord(item.word) === normalized)?.wordNet },
+    ...current.filter((item) => item.type !== "dictionary" || normalizeDictionaryWord(item.word) !== normalized)
   ], limit);
 }
 
@@ -81,12 +98,34 @@ export function recordAnalysisHistory(
     requestId: query.requestId,
     sentence: query.sentence.trim(),
     result: result.trim(),
+    videoId: query.videoId,
+    startMs: query.startMs,
     createdAt: Date.now()
   };
   if (!entry.sentence || !entry.result) return getSidebarHistory();
   return writeHistory((current) => [
     entry,
     ...current.filter((item) => item.type !== "analysis" || item.requestId !== query.requestId)
+  ], limit);
+}
+
+export function saveWordNetSenses(word: string, wordNet: WordNetSense[], limit: number): Promise<SidebarHistoryEntry[]> {
+  return writeHistory((current) => current.map((entry) =>
+    entry.type === "dictionary" && normalizeDictionaryWord(entry.word) === word
+      ? { ...entry, wordNet }
+      : entry
+  ), limit);
+}
+
+export function recordTranslationHistory(
+  note: Pick<TranslationHistoryEntry, "videoId" | "startMs" | "sentence" | "result">,
+  limit: number
+): Promise<SidebarHistoryEntry[]> {
+  const entry: TranslationHistoryEntry = { ...note, type: "translation", id: createId("translation"), createdAt: Date.now() };
+  return writeHistory((current) => [
+    entry,
+    ...current.filter((item) => item.type !== "translation" || item.videoId !== note.videoId ||
+      item.startMs !== note.startMs || item.sentence !== note.sentence)
   ], limit);
 }
 

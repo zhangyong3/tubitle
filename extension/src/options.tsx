@@ -120,7 +120,7 @@ function App() {
         offlineDictionaryResources: { configured: false, files: [] },
         offlineDictionaryDirectory: { name: "", lastImported: 0 }
       }));
-      setDictionaryMessage("已移除离线词典，将恢复使用 LDOCE 在线查询。");
+      setDictionaryMessage("已移除离线词典。查词时仍可查看 Open English WordNet 释义。");
     } catch (error) {
       setDictionaryMessage(error instanceof Error ? error.message : "移除离线词典失败");
     } finally {
@@ -231,7 +231,7 @@ function App() {
                 : "未找到"}</p>
               <p className="hint">目录内的匹配文件已复制到浏览器扩展存储，不会上传到服务。</p>
             </div>
-          ) : <p className="hint">选择包含 MDX、CSS 和 MDD 的词典目录，扩展会自动识别并导入；未设置时继续打开 LDOCE。</p>}
+          ) : <p className="hint">选择包含 MDX、CSS 和 MDD 的词典目录，扩展会自动识别并导入。未设置时，查词页会隐藏离线词典。</p>}
           <div className="actions">
             <button type="button" disabled={dictionaryBusy} onClick={() => dictionaryDirectoryInput.current?.click()}>{form.offlineDictionary.configured ? "重新选择词典目录" : "选择词典目录"}</button>
             {form.offlineDictionary.configured && <button type="button" disabled={dictionaryBusy} onClick={() => void removeDictionary()}>移除离线词典</button>}

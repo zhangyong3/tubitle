@@ -9,7 +9,6 @@ import { shortcutFromEvent, shortcutsMatch } from "./shortcuts";
 import { findSentenceIndex, navigationTargetIndex, type NavigationDirection } from "./navigation";
 import { sendMessage } from "../shared/messaging";
 import { getSettings, updateSettings } from "../shared/settings";
-import { DICTIONARY_QUERY_KEY } from "../shared/offline-dictionary";
 import { ANALYSIS_QUERY_KEY } from "../shared/analysis-stream";
 import { normalizeDictionaryWord } from "../shared/dictionary-lookup";
 import type {
@@ -103,7 +102,7 @@ const overlay = new SubtitleOverlay({
     pausedByHover = false;
   },
   onLookup: (word) => {
-    void openDictionary(word);
+    openDictionary(word);
   },
   onCopy: async (word) => {
     await navigator.clipboard.writeText(word);
@@ -117,6 +116,7 @@ const overlay = new SubtitleOverlay({
 
 const learningPanel = new PageLearningPanel({
   onSeek: (index) => seekTo(index),
+  onStudy: (videoId, id) => void studySentenceTranslation(videoId, id),
   onPrefetch: (indexes) => prefetchCaptionIndexes(indexes)
 });
 
@@ -236,7 +236,8 @@ function translationKey(sentence: CaptionSentence, provider: ExtensionSettings["
 
 async function getSentenceTranslation(
   sentence: CaptionSentence,
-  provider: ExtensionSettings["provider"]
+  provider: ExtensionSettings["provider"],
+  userRequested = false
 ): Promise<string> {
   if (skipSentenceTranslation(sentence)) return "";
   const version = loadVersion;
@@ -254,7 +255,7 @@ async function getSentenceTranslation(
     text: sentence.text,
     sourceLanguage: sourceLanguage(sentence.text, captionLanguage),
     provider,
-    priority: sentence.id === sentences[activeIndex]?.id ? "current" : "prefetch"
+    priority: userRequested || sentence.id === sentences[activeIndex]?.id ? "current" : "prefetch"
   }).then((translation) => {
     if (version !== loadVersion || target !== settings.targetLanguage) return "";
     translation = decodeTextEntities(translation);
@@ -366,6 +367,22 @@ function drainTranslationQueue(): void {
   }
 }
 
+async function studySentenceTranslation(videoId: string, id: string): Promise<void> {
+  if (!videoId || videoId !== new URL(location.href).searchParams.get("v")) return;
+  const sentence = sentences.find((item) => item.id === id);
+  if (!sentence) return;
+  const version = loadVersion;
+  try {
+    const translation = await getSentenceTranslation(sentence, settings.provider, true);
+    if (version !== loadVersion) return;
+    learningPanel.studyTranslation({
+      videoId, sentence, translation: translation || undefined, error: translation ? undefined : "这句没有可保存的译文"
+    });
+  } catch (error) {
+    if (version === loadVersion) learningPanel.studyTranslation({ videoId, sentence, error: errorMessage(error) });
+  }
+}
+
 async function analyzeCurrentSentence(): Promise<void> {
   const sentence = sentences[activeIndex];
   if (!sentence) return;
@@ -373,6 +390,8 @@ async function analyzeCurrentSentence(): Promise<void> {
     await chrome.storage.local.set({
       [ANALYSIS_QUERY_KEY]: {
         sentence: sentence.text,
+        videoId: new URL(location.href).searchParams.get("v") ?? undefined,
+        startMs: sentence.startMs,
         requestId: crypto.randomUUID(),
         createdAt: Date.now()
       }
@@ -383,25 +402,9 @@ async function analyzeCurrentSentence(): Promise<void> {
   }
 }
 
-async function openDictionary(value: string): Promise<void> {
+function openDictionary(value: string): void {
   const word = normalizeDictionaryWord(value);
-  if (!word) return;
-  try {
-    if (!settings.offlineDictionary.configured) {
-      await sendMessage<void>({ type: "OPEN_DICTIONARY", word, offline: false });
-      return;
-    }
-    await chrome.storage.local.set({
-      [DICTIONARY_QUERY_KEY]: {
-        word,
-        requestId: crypto.randomUUID(),
-        createdAt: Date.now()
-      }
-    });
-    learningPanel.openTab("dictionary");
-  } catch (error) {
-    overlay.showStatus(errorMessage(error), true);
-  }
+  if (word) learningPanel.lookupWord(word);
 }
 
 function activateSentence(index: number): void {

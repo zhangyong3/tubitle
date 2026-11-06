@@ -2,11 +2,9 @@ import { memo, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Mdict from "@tubetitle/mdict-browser";
 import {
-  DICTIONARY_QUERY_KEY,
   getOfflineDictionaryCss,
   getOfflineDictionaryFile,
-  getOfflineDictionaryResourceFiles,
-  type DictionaryQuery
+  getOfflineDictionaryResourceFiles
 } from "./shared/offline-dictionary";
 import type {
   ExtensionSettings,
@@ -29,13 +27,23 @@ import {
   clearSidebarHistory,
   DEFAULT_HISTORY_LIMIT,
   parseSidebarHistory,
+  getSidebarHistory,
   recordAnalysisHistory,
   recordDictionaryHistory,
+  recordTranslationHistory,
+  saveWordNetSenses,
   SIDEBAR_HISTORY_KEY,
   trimSidebarHistory,
   type AnalysisHistoryEntry,
   type SidebarHistoryEntry
 } from "./shared/sidebar-history";
+
+import { buildTranscriptNotes, formatCaptionTime } from "./shared/transcript-notes";
+
+import {
+  lookupWordNet, PRINCETON_COPYRIGHT, PRINCETON_LICENSE, PRINCETON_NOTICE,
+  WORDNET_COPYRIGHT, WORDNET_LICENSE, WORDNET_NAME, WORDNET_SITE, type WordNetSense
+} from "./shared/wordnet";
 
 type SidebarTab = TranscriptPanelTab;
 
@@ -205,13 +213,19 @@ function App() {
   const [transcript, setTranscript] = useState<TranscriptPanelSnapshot>();
   const [transcriptAutoFollow, setTranscriptAutoFollow] = useState(true);
   const [result, setResult] = useState<LookupResult>();
-  const [loadingWord, setLoadingWord] = useState("");
+  const [lookup, setLookup] = useState<{ word: string }>();
+  const [wordNetSenses, setWordNetSenses] = useState<WordNetSense[]>();
+  const [wordNetError, setWordNetError] = useState(false);
+  const [offlineConfigured, setOfflineConfigured] = useState(false);
+  const [offlineRevision, setOfflineRevision] = useState(0);
+  const wordNetController = useRef<AbortController | undefined>(undefined);
   const [playbackError, setPlaybackError] = useState("");
   const [analysisSentence, setAnalysisSentence] = useState("");
   const [analysisText, setAnalysisText] = useState("");
   const [analysisStatus, setAnalysisStatus] = useState<"streaming" | "done" | "error">("streaming");
   const [analysisError, setAnalysisError] = useState("");
   const [copyStatus, setCopyStatus] = useState("复制到笔记");
+  const [studyFeedback, setStudyFeedback] = useState<{ videoId: string; text: string; error?: boolean }>();
   const [history, setHistory] = useState<SidebarHistoryEntry[]>([]);
   const [historyLimit, setHistoryLimit] = useState(DEFAULT_HISTORY_LIMIT);
   const analysisController = useRef<AbortController | undefined>(undefined);
@@ -244,11 +258,26 @@ function App() {
             ? { ...sentence, translation: message.translation, translationError: message.error }
             : sentence)
         } : current);
+      } else if (message.type === "STUDY_TRANSLATION") {
+        const { videoId, sentence, translation, error } = message;
+        if (!translation) {
+          setStudyFeedback({ videoId, text: error || "这句没有可保存的译文", error: true });
+          return;
+        }
+        void recordTranslationHistory({
+          videoId, sentence: sentence.text, startMs: sentence.startMs, result: translation
+        }, historyLimitRef.current).then((entries) => {
+          setHistory(entries);
+          setStudyFeedback({ videoId, text: `${formatCaptionTime(sentence.startMs)} 的译文已加入 PDF 旁批` });
+        }).catch(() => setStudyFeedback({ videoId, text: "无法保存句子译文", error: true }));
+      } else if (message.type === "LOOKUP_WORD") {
+        void search(message.word);
       } else if (message.type === "OPEN_PANEL_TAB") {
         setActiveTab(message.tab);
       }
     };
     window.addEventListener("message", listener);
+    postToHost({ source: "tubitle-panel", type: "PANEL_READY" });
     return () => window.removeEventListener("message", listener);
   }, []);
 
@@ -308,16 +337,50 @@ function App() {
     });
   }
 
-  async function search(word: string, saveToHistory = true) {
+  async function search(input: string, saveToHistory = true) {
+    const word = normalizeDictionaryWord(input);
+    if (!word) return;
+    wordNetController.current?.abort();
+    const controller = new AbortController();
+    wordNetController.current = controller;
     setActiveTab("dictionary");
-    setLoadingWord(word);
+    setLookup({ word });
     setPlaybackError("");
     setResult(undefined);
-    if (saveToHistory) void recordDictionaryHistory(word, historyLimitRef.current).then(setHistory);
-    const next = await lookupWord(word);
-    setResult(next);
-    setLoadingWord("");
+    setWordNetSenses(undefined);
+    setWordNetError(false);
+    try {
+      const entries = await (saveToHistory
+        ? recordDictionaryHistory(word, historyLimitRef.current)
+        : getSidebarHistory()).catch(() => []);
+      if (controller.signal.aborted) return;
+      const cached = entries.find((entry) =>
+        entry.type === "dictionary" && normalizeDictionaryWord(entry.word) === word);
+      if (cached?.type === "dictionary" && cached.wordNet?.length) {
+        setWordNetSenses(cached.wordNet);
+        return;
+      }
+      const senses = await lookupWordNet(word, controller.signal);
+      if (senses.length) await saveWordNetSenses(word, senses, historyLimitRef.current).catch(() => undefined);
+      if (!controller.signal.aborted) setWordNetSenses(senses);
+    } catch {
+      if (!controller.signal.aborted) setWordNetError(true);
+    }
   }
+
+  useEffect(() => {
+    setResult(undefined);
+    setPlaybackError("");
+    if (!lookup || !offlineConfigured) return;
+    let cancelled = false;
+    void lookupWord(lookup.word).then((next) => {
+      if (!cancelled) setResult(next);
+      else for (const url of next.audioUrls ?? []) URL.revokeObjectURL(url);
+    });
+    return () => { cancelled = true; };
+  }, [lookup, offlineConfigured, offlineRevision]);
+
+  useEffect(() => () => wordNetController.current?.abort(), []);
 
   useEffect(() => () => {
     for (const url of result?.audioUrls ?? []) URL.revokeObjectURL(url);
@@ -326,62 +389,55 @@ function App() {
   useEffect(() => () => stopAnalysisStream(), []);
 
   useEffect(() => {
-    let latestWord = "";
     void Promise.all([
-      chrome.storage.local.get([DICTIONARY_QUERY_KEY, ANALYSIS_QUERY_KEY, SIDEBAR_HISTORY_KEY]),
+      chrome.storage.local.get([ANALYSIS_QUERY_KEY, SIDEBAR_HISTORY_KEY]),
       getSettings()
     ]).then(([stored, settings]) => {
+      setOfflineConfigured(settings.offlineDictionary.configured);
       historyLimitRef.current = settings.historyLimit;
       setHistoryLimit(settings.historyLimit);
       const savedHistory = parseSidebarHistory(stored[SIDEBAR_HISTORY_KEY]);
       setHistory(savedHistory);
       if (EMBEDDED) return;
-      const dictionaryQuery = stored[DICTIONARY_QUERY_KEY] as DictionaryQuery | undefined;
       const analysisQuery = stored[ANALYSIS_QUERY_KEY] as AnalysisQuery | undefined;
-      if (analysisQuery?.sentence && (analysisQuery.createdAt ?? 0) >= (dictionaryQuery?.createdAt ?? 0)) {
+      if (analysisQuery?.sentence) {
         const saved = savedHistory.find((entry): entry is AnalysisHistoryEntry =>
           entry.type === "analysis" && entry.requestId === analysisQuery.requestId
         );
         if (saved) openSavedAnalysis(saved);
         else analyze(analysisQuery);
-      } else if (dictionaryQuery?.word) {
-        latestWord = dictionaryQuery.word;
-        void search(dictionaryQuery.word);
       }
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area !== "local") return;
-      const query = changes[DICTIONARY_QUERY_KEY]?.newValue as DictionaryQuery | undefined;
-      if (query?.word) { latestWord = query.word; void search(query.word); }
       const analysisQuery = changes[ANALYSIS_QUERY_KEY]?.newValue as AnalysisQuery | undefined;
       if (analysisQuery?.sentence) analyze(analysisQuery);
       if (changes[SIDEBAR_HISTORY_KEY]) setHistory(parseSidebarHistory(changes[SIDEBAR_HISTORY_KEY].newValue));
       if (changes.settings) {
         const previous = changes.settings.oldValue as ExtensionSettings | undefined;
         const next = changes.settings.newValue as ExtensionSettings | undefined;
+        setOfflineConfigured(Boolean(next?.offlineDictionary?.configured));
         const nextHistoryLimit = next?.historyLimit ?? DEFAULT_HISTORY_LIMIT;
         historyLimitRef.current = nextHistoryLimit;
         setHistoryLimit(nextHistoryLimit);
-        if (
-          previous?.offlineDictionary.name !== next?.offlineDictionary.name ||
-          previous?.offlineDictionary.lastModified !== next?.offlineDictionary.lastModified ||
-          previous?.offlineDictionary.size !== next?.offlineDictionary.size
-        ) dictionaryPromise = undefined;
-        if (
+        const mdxChanged = (
+          previous?.offlineDictionary?.name !== next?.offlineDictionary?.name ||
+          previous?.offlineDictionary?.lastModified !== next?.offlineDictionary?.lastModified ||
+          previous?.offlineDictionary?.size !== next?.offlineDictionary?.size
+        );
+        if (mdxChanged) dictionaryPromise = undefined;
+        const cssChanged = (
           previous?.offlineDictionaryCss?.name !== next?.offlineDictionaryCss?.name ||
           previous?.offlineDictionaryCss?.lastModified !== next?.offlineDictionaryCss?.lastModified ||
           previous?.offlineDictionaryCss?.size !== next?.offlineDictionaryCss?.size
-        ) {
-          dictionaryCssPromise = undefined;
-          if (latestWord) void search(latestWord);
-        }
-        if (
+        );
+        if (cssChanged) dictionaryCssPromise = undefined;
+        const resourcesChanged = (
           JSON.stringify(previous?.offlineDictionaryResources?.files ?? []) !==
           JSON.stringify(next?.offlineDictionaryResources?.files ?? [])
-        ) {
-          resourceDictionariesPromise = undefined;
-          if (latestWord) void search(latestWord);
-        }
+        );
+        if (resourcesChanged) resourceDictionariesPromise = undefined;
+        if (mdxChanged || cssChanged || resourcesChanged) setOfflineRevision((revision) => revision + 1);
       }
     };
     chrome.storage.onChanged.addListener(listener);
@@ -429,6 +485,7 @@ function App() {
           snapshot={transcript}
           autoFollow={transcriptAutoFollow}
           onAutoFollowChange={setTranscriptAutoFollow}
+          studyFeedback={studyFeedback?.videoId === transcript?.videoId ? studyFeedback : undefined}
           visible
         />
       </div>
@@ -482,7 +539,13 @@ function App() {
           </header>
           {visibleHistory.length > 0 ? (
             <div className="history-list">
-              {visibleHistory.map((entry) => (
+              {visibleHistory.map((entry) => entry.type === "translation" ? (
+                <article className="history-item history-translation" key={entry.id}>
+                  <span className="history-kind">句子翻译</span>
+                  <span className="history-content"><strong>{entry.sentence}</strong><small>{entry.result}</small></span>
+                  <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
+                </article>
+              ) : (
                 <button
                   type="button"
                   className="history-item"
@@ -498,7 +561,7 @@ function App() {
                 </button>
               ))}
             </div>
-          ) : <div className="status empty">暂无历史记录。查词或完成语句分析后会自动保存在这里。</div>}
+          ) : <div className="status empty">暂无历史记录。查词、保存译文或完成语句分析后会显示在这里。</div>}
         </main>
       </div>
     );
@@ -514,30 +577,60 @@ function App() {
         visible={false}
       />
       <main
-        className={`page${result?.definition ? " definition-page" : ""}`}
+        className="page dictionary-page"
         id="dictionary-panel"
         role="tabpanel"
         aria-labelledby="dictionary-tab"
       >
-        {!result?.definition && <div className="brand">Tubitle · 离线词典</div>}
-        {loadingWord ? (
-          <><h1 className="word">{loadingWord}</h1><div className="status">正在加载 MDX 词典并查询…</div></>
-        ) : result ? (
+        {lookup ? (
           <>
-            {!result.definition && <h1 className="word">{result.word}</h1>}
-            {playbackError && <div className="audio-error">{playbackError}</div>}
-            {result.error ? <div className="status error">{result.error}</div> : result.definition ? (
-              <DictionaryDefinition
-                html={result.definition}
-                css={result.css}
-                onSearch={(entry) => void search(entry)}
-                onPlaybackError={setPlaybackError}
-              />
-            ) : <div className="status empty">词典中没有找到完全匹配的词条。</div>}
-            {result.suggestions.length > 0 && (
-              <div className="suggestions"><div className="brand">相关词条</div>{result.suggestions.map((word) => (
-                <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
-              ))}</div>
+            <a className="dictionary-link" href={`https://www.ldoceonline.com/dictionary/${encodeURIComponent(lookup.word.replaceAll(" ", "-"))}`}
+              target="_blank" rel="noopener noreferrer">在朗文查看 <span aria-hidden="true">↗</span></a>
+            <h1 className="word">{lookup.word}</h1>
+            <section className="dictionary-source" aria-labelledby="wordnet-heading">
+              <h2 id="wordnet-heading">{WORDNET_NAME}</h2>
+              <div aria-live="polite">
+                {wordNetError ? <div className="status error">暂时无法加载 WordNet 释义。</div>
+                  : !wordNetSenses ? <div className="status">正在查询 WordNet…</div>
+                  : !wordNetSenses.length ? <div className="status empty">WordNet 中没有找到这个词条。</div>
+                  : <ol className="wordnet-senses" lang="en">{wordNetSenses.map((sense, index) => (
+                    <li key={index}>
+                      {sense.partOfSpeech && <span className="wordnet-pos">{sense.partOfSpeech}</span>}
+                      {sense.definitions.map((definition, i) => <div key={i}>{definition}</div>)}
+                      {sense.examples.map((example, i) => <blockquote key={i}>“{example}”</blockquote>)}
+                    </li>
+                  ))}</ol>}
+              </div>
+              <div className="dictionary-credit">
+                <a href={WORDNET_SITE} target="_blank" rel="noopener noreferrer">{WORDNET_NAME}</a> · {WORDNET_COPYRIGHT}
+                {" "}<a href={WORDNET_LICENSE} target="_blank" rel="noopener noreferrer">CC BY 4.0</a> · 节选释义和例句，重新排版。
+                <details>
+                  <summary>{PRINCETON_COPYRIGHT}</summary>
+                  <p lang="en">{PRINCETON_NOTICE}</p>
+                  <a href={PRINCETON_LICENSE} target="_blank" rel="noopener noreferrer">Princeton WordNet 许可原文</a>
+                </details>
+              </div>
+            </section>
+            {offlineConfigured && (
+              <section className="dictionary-source" aria-labelledby="offline-heading">
+                <h2 id="offline-heading">离线词典</h2>
+                {playbackError && <div className="audio-error">{playbackError}</div>}
+                {!result ? <div className="status">正在查询离线词典…</div>
+                  : result.error ? <div className="status error">{result.error}</div>
+                  : result.definition ? (
+                    <DictionaryDefinition
+                      html={result.definition}
+                      css={result.css}
+                      onSearch={(entry) => void search(entry)}
+                      onPlaybackError={setPlaybackError}
+                    />
+                  ) : <div className="status empty">离线词典中没有找到完全匹配的词条。</div>}
+                {!!result?.suggestions.length && (
+                  <div className="suggestions"><div className="brand">相关词条</div>{result.suggestions.map((word) => (
+                    <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
+                  ))}</div>
+                )}
+              </section>
             )}
           </>
         ) : <div className="status">在 YouTube 字幕中双击英文单词，即可在这里查询。</div>}
@@ -600,15 +693,32 @@ function SidebarTabs({ activeTab, onSelect }: {
   );
 }
 
-function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, visible }: {
+function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedback, visible }: {
   snapshot?: TranscriptPanelSnapshot;
   autoFollow: boolean;
   onAutoFollowChange: (value: boolean) => void;
+  studyFeedback?: { text: string; error?: boolean };
   visible: boolean;
 }) {
   const listRef = useRef<HTMLOListElement>(null);
   const scrollFrame = useRef<number | undefined>(undefined);
   const activeIndex = snapshot?.activeIndex ?? -1;
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+
+  async function exportPdf() {
+    if (!snapshot?.sentences.length || exporting) return;
+    setExportError("");
+    setExporting(true);
+    try {
+      const [{ downloadTranscriptPdf }, history] = await Promise.all([import("./shared/transcript-pdf"), getSidebarHistory()]);
+      await downloadTranscriptPdf(snapshot.videoTitle, buildTranscriptNotes(snapshot, history));
+    } catch (error) {
+      setExportError(`无法下载字幕 PDF：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function requestVisibleTranslations() {
     if (!visible) return;
@@ -656,6 +766,11 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, visible }: {
           <h1>{snapshot?.videoTitle || "双语字幕"}</h1>
         </div>
         <div className="transcript-actions">
+          {snapshot && !snapshot.loading && !snapshot.error && snapshot.sentences.length > 0 && (
+            <button type="button" className="collapse-panel export-pdf" disabled={exporting} onClick={() => void exportPdf()}>
+              {exporting ? "生成中…" : "下载 PDF"}
+            </button>
+          )}
           <label><input type="checkbox" checked={autoFollow} onChange={(event) => onAutoFollowChange(event.target.checked)} /> 自动跟随</label>
           {EMBEDDED && (
             <button
@@ -674,6 +789,11 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, visible }: {
         <div><span style={{ width: `${progress}%` }} /></div>
         <time>{formatCaptionTime(snapshot?.durationMs ?? 0)}</time>
       </div>
+      {(exportError || studyFeedback) && (
+        <div className={`transcript-feedback${exportError || studyFeedback?.error ? " error" : ""}`} role="status">
+          {exportError || studyFeedback?.text}
+        </div>
+      )}
       {snapshot?.loading ? (
         <div className="transcript-state">正在读取当前视频字幕…</div>
       ) : snapshot?.error ? (
@@ -688,7 +808,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, visible }: {
           }}
         >
           {snapshot.sentences.map((sentence, index) => (
-            <TranscriptCueRow sentence={sentence} index={index} active={index === activeIndex} key={sentence.id} />
+            <TranscriptCueRow sentence={sentence} index={index} active={index === activeIndex} videoId={snapshot.videoId} key={sentence.id} />
           ))}
         </ol>
       ) : (
@@ -698,15 +818,17 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, visible }: {
   );
 }
 
-const TranscriptCueRow = memo(function TranscriptCueRow({ sentence, index, active }: {
+const TranscriptCueRow = memo(function TranscriptCueRow({ sentence, index, active, videoId }: {
   sentence: TranscriptPanelSnapshot["sentences"][number];
   index: number;
   active: boolean;
+  videoId: string;
 }) {
   return (
     <li className={`transcript-item${active ? " active" : ""}`} data-index={index}>
       <button
         type="button"
+        className="transcript-seek"
         aria-current={active ? "true" : undefined}
         onClick={() => postToHost({ source: "tubitle-panel", type: "SEEK_TO_CAPTION", index })}
       >
@@ -719,20 +841,16 @@ const TranscriptCueRow = memo(function TranscriptCueRow({ sentence, index, activ
           </small>}
         </span>
       </button>
+      {!sentence.translationSkipped && <button
+        type="button"
+        className="transcript-study"
+        title="翻译并保存到 PDF 旁批"
+        aria-label={`翻译并保存 ${formatCaptionTime(sentence.startMs)} 的字幕`}
+        onClick={() => postToHost({ source: "tubitle-panel", type: "STUDY_CAPTION", videoId, sentenceId: sentence.id })}
+      >译</button>}
     </li>
   );
 });
-
-function formatCaptionTime(valueMs: number): string {
-  if (!Number.isFinite(valueMs) || valueMs < 0) return "00:00";
-  const seconds = Math.floor(valueMs / 1000);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor(seconds % 3600 / 60);
-  const remainder = seconds % 60;
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
-    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
-}
 
 function analysisPreview(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 100);

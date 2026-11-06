@@ -13,6 +13,25 @@ describe("cuesToSentences", () => {
     expect(result.map((item) => item.text)).toEqual(["This is a test.", "It works!"]);
   });
 
+  it("keeps titles and decimals within the sentence, including across cues", () => {
+    const result = cuesToSentences([
+      { text: "I asked Dr.", startMs: 0, endMs: 900 },
+      { text: "Chen about version 3.5. It works.", startMs: 900, endMs: 2700 }
+    ]);
+    expect(result.map((item) => item.text)).toEqual(["I asked Dr. Chen about version 3.5.", "It works."]);
+  });
+
+  it("breaks a long single cue into readable units without losing words", () => {
+    const text = "We started walking through the quiet forest, and after we passed several streams and steep hills we found a small cabin, but nobody was home so we continued toward the lake where we planned to rest.";
+    const result = cuesToSentences([{ text, startMs: 2000, endMs: 14000 }]);
+    expect(result.length).toBeGreaterThan(1);
+    expect(result.every((item) => item.text.length <= 120)).toBe(true);
+    expect(result.map((item) => item.text).join(" ")).toBe(text);
+    expect(result[0]?.text).toMatch(/,$/);
+    expect(result[0]?.startMs).toBe(2000);
+    expect(result.at(-1)?.endMs).toBe(14000);
+  });
+
   it("collapses rolling automatic captions", () => {
     const result = cuesToSentences([
       { text: "we need", startMs: 0, endMs: 900 },

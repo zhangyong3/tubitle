@@ -7,6 +7,7 @@ import type {
 
 interface LearningPanelHandlers {
   onSeek: (index: number) => void;
+  onStudy: (videoId: string, sentenceId: string) => void;
   onPrefetch: (indexes: number[]) => void;
 }
 
@@ -39,6 +40,7 @@ export class PageLearningPanel {
   private readonly launcher = document.createElement("button");
   private snapshot?: TranscriptPanelSnapshot;
   private pendingTab?: TranscriptPanelTab;
+  private pendingWord?: string;
   private frameReady = false;
   private visible = false;
   private manuallyCollapsed = false;
@@ -55,11 +57,6 @@ export class PageLearningPanel {
     this.frame.className = "frame";
     this.frame.src = chrome.runtime.getURL("sidepanel.html?embedded=1");
     this.frame.title = "Tubitle 学习面板";
-    this.frame.addEventListener("load", () => {
-      this.frameReady = true;
-      if (this.snapshot) this.post({ source: "tubitle-host", type: "TRANSCRIPT_STATE", state: this.snapshot });
-      if (this.pendingTab) this.post({ source: "tubitle-host", type: "OPEN_PANEL_TAB", tab: this.pendingTab });
-    });
 
     this.launcher.className = "launcher";
     this.launcher.type = "button";
@@ -114,12 +111,22 @@ export class PageLearningPanel {
     this.post({ source: "tubitle-host", type: "TRANSCRIPT_TRANSLATION", sentenceId, translation, error });
   }
 
+  studyTranslation(result: Omit<Extract<TranscriptPanelHostMessage, { type: "STUDY_TRANSLATION" }>, "type" | "source">): void {
+    this.post({ source: "tubitle-host", type: "STUDY_TRANSLATION", ...result });
+  }
+
   openTab(tab: TranscriptPanelTab): void {
     this.pendingTab = tab;
     this.manuallyCollapsed = false;
     this.forcedOverlay = true;
     this.applyLayout();
     this.post({ source: "tubitle-host", type: "OPEN_PANEL_TAB", tab });
+  }
+
+  lookupWord(word: string): void {
+    this.openTab("dictionary");
+    if (this.frameReady) this.post({ source: "tubitle-host", type: "LOOKUP_WORD", word });
+    else this.pendingWord = word;
   }
 
   destroy(): void {
@@ -131,8 +138,18 @@ export class PageLearningPanel {
     if (event.source !== this.frame.contentWindow || event.origin !== chrome.runtime.getURL("").slice(0, -1)) return;
     const message = event.data;
     if (message?.source !== "tubitle-panel") return;
-    if (message.type === "SEEK_TO_CAPTION" && Number.isInteger(message.index)) {
+    if (message.type === "PANEL_READY") {
+      this.frameReady = true;
+      if (this.snapshot) this.post({ source: "tubitle-host", type: "TRANSCRIPT_STATE", state: this.snapshot });
+      if (this.pendingTab) this.post({ source: "tubitle-host", type: "OPEN_PANEL_TAB", tab: this.pendingTab });
+      if (this.pendingWord) {
+        this.post({ source: "tubitle-host", type: "LOOKUP_WORD", word: this.pendingWord });
+        this.pendingWord = undefined;
+      }
+    } else if (message.type === "SEEK_TO_CAPTION" && Number.isInteger(message.index)) {
       this.handlers.onSeek(message.index);
+    } else if (message.type === "STUDY_CAPTION") {
+      this.handlers.onStudy(message.videoId, message.sentenceId);
     } else if (message.type === "PREFETCH_CAPTIONS" && Array.isArray(message.indexes)) {
       this.handlers.onPrefetch(message.indexes.filter(Number.isInteger));
     } else if (message.type === "COLLAPSE_PANEL") {

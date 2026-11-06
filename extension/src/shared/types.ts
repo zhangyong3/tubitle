@@ -104,10 +104,14 @@ export type TranscriptPanelHostMessage =
   | { source: "tubitle-host"; type: "TRANSCRIPT_STATE"; state: TranscriptPanelSnapshot }
   | { source: "tubitle-host"; type: "TRANSCRIPT_ACTIVE"; activeIndex: number; currentTimeMs: number; durationMs: number }
   | { source: "tubitle-host"; type: "TRANSCRIPT_TRANSLATION"; sentenceId: string; translation?: string; error?: string }
-  | { source: "tubitle-host"; type: "OPEN_PANEL_TAB"; tab: TranscriptPanelTab };
+  | { source: "tubitle-host"; type: "STUDY_TRANSLATION"; videoId: string; sentence: CaptionSentence; translation?: string; error?: string }
+  | { source: "tubitle-host"; type: "OPEN_PANEL_TAB"; tab: TranscriptPanelTab }
+  | { source: "tubitle-host"; type: "LOOKUP_WORD"; word: string };
 
 export type TranscriptPanelFrameMessage =
+  | { source: "tubitle-panel"; type: "PANEL_READY" }
   | { source: "tubitle-panel"; type: "SEEK_TO_CAPTION"; index: number }
+  | { source: "tubitle-panel"; type: "STUDY_CAPTION"; videoId: string; sentenceId: string }
   | { source: "tubitle-panel"; type: "PREFETCH_CAPTIONS"; indexes: number[] }
   | { source: "tubitle-panel"; type: "COLLAPSE_PANEL" };
 
@@ -124,8 +128,7 @@ export type ExtensionMessage =
   | { type: "UPDATE_SETTINGS"; settings: Partial<ExtensionSettings> }
   | { type: "TRANSLATE"; text: string; sourceLanguage?: string; provider: TranslationProvider; priority?: "current" | "prefetch" }
   | { type: "TEST_PROVIDER"; provider: TranslationProvider | "llm" }
-  | { type: "OPEN_ANALYSIS"; sentence: string }
-  | { type: "OPEN_DICTIONARY"; word: string; offline: boolean };
+  | { type: "OPEN_ANALYSIS"; sentence: string };
 
 export type MessageResponse<T = unknown> =
   | { ok: true; data: T }

@@ -35,32 +35,43 @@ function normalizeText(text: string): string {
 }
 
 function removeOverlap(previous: string, next: string): string {
-  const max = Math.min(previous.length, next.length, 80);
-  for (let length = max; length >= 4; length -= 1) {
-    const suffix = previous.slice(-length).toLowerCase();
-    const prefix = next.slice(0, length).toLowerCase();
-    if (suffix === prefix) return next.slice(length).trimStart();
+  const words = next.match(/\S+\s*/g) ?? [];
+  let length = 0;
+  let overlap = 0;
+  for (const word of words) {
+    length += word.length;
+    if (length > 80) break;
+    const prefix = next.slice(0, length).trimEnd().toLowerCase();
+    const start = previous.length - prefix.length;
+    if (prefix.length >= 4 && start >= 0 && (start === 0 || previous[start - 1] === " ") &&
+      previous.slice(start).toLowerCase() === prefix) overlap = length;
   }
-  return next;
+  return next.slice(overlap);
+}
+
+interface PositionedCue extends CaptionCue {
+  offset: number;
+}
+
+const CAPTION_LENGTH = 120;
+const MIN_SOFT_BREAK = 40;
+const JOIN_GAP_MS = 1400;
+
+function isRollingPrefix(prefix: string, text: string): boolean {
+  return text === prefix || (text.startsWith(prefix) && /^[\s.,!?;:。，！？；：]/u.test(text.slice(prefix.length)));
 }
 
 function collapseRollingCues(cues: CaptionCue[]): CaptionCue[] {
   const result: CaptionCue[] = [];
   for (const cue of cues) {
     const previous = result.at(-1);
-    if (!previous) {
-      result.push({ ...cue });
-      continue;
-    }
-    const previousLower = previous.text.toLowerCase();
-    const currentLower = cue.text.toLowerCase();
-    const nearby = cue.startMs <= previous.endMs + 1500;
-    if (nearby && currentLower.startsWith(previousLower)) {
+    const current = cue.text.toLowerCase();
+    const prior = previous?.text.toLowerCase();
+    // Consecutive nonoverlapping cues can be genuine repetition.
+    if (previous && prior && cue.startMs < previous.endMs && isRollingPrefix(prior, current)) {
       previous.text = cue.text;
       previous.endMs = Math.max(previous.endMs, cue.endMs);
-    } else if (nearby && previousLower.startsWith(currentLower)) {
-      previous.endMs = Math.max(previous.endMs, cue.endMs);
-    } else if (previousLower === currentLower) {
+    } else if (previous && prior && cue.startMs < previous.endMs && isRollingPrefix(current, prior)) {
       previous.endMs = Math.max(previous.endMs, cue.endMs);
     } else {
       result.push({ ...cue });
@@ -69,60 +80,96 @@ function collapseRollingCues(cues: CaptionCue[]): CaptionCue[] {
   return result;
 }
 
-function splitCue(cue: CaptionCue): CaptionCue[] {
-  const parts = cue.text.match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g)?.map(normalizeText) ?? [];
-  if (parts.length <= 1) return [cue];
-  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
-  const duration = Math.max(1, cue.endMs - cue.startMs);
-  let consumedLength = 0;
-  return parts.map((text, index) => {
-    const startMs = cue.startMs + (duration * consumedLength) / totalLength;
-    consumedLength += text.length;
-    const endMs = index === parts.length - 1
-      ? Math.max(cue.endMs, startMs + 1)
-      : cue.startMs + (duration * consumedLength) / totalLength;
-    return { text, startMs, endMs: Math.max(endMs, startMs + 1) };
-  });
+function isAbbreviation(text: string, period: number): boolean {
+  const left = text.slice(Math.max(0, period - 14), period + 1);
+  const right = text.slice(period + 1, period + 20);
+  return /\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|e\.g|i\.e)\.$/i.test(left) ||
+    (/\b(?:[A-Za-z]\.){2,}$/.test(left) && /^\s+[a-z]/.test(right)) ||
+    (/\b\p{Lu}\.$/u.test(left) && /^\s+\p{Lu}\p{Ll}/u.test(right));
+}
+
+function splitLongCaption(text: string, start: number, end: number, breaks: Map<number, number>, emit: (start: number, end: number) => void) {
+  while (end - start > CAPTION_LENGTH) {
+    const window = text.slice(start, start + CAPTION_LENGTH + 1);
+    const candidates = [...window.matchAll(/ +|(?<=[，；：、])(?=\S)/gu)].flatMap((match) => {
+      const offset = match.index;
+      if (offset > CAPTION_LENGTH || offset === 0) return [];
+      const next = offset + match[0].length;
+      const left = window.slice(0, offset);
+      const right = text.slice(start + next, end);
+      const pause = breaks.get(start + next) ?? 0;
+      const score = /[,;:，；：、]["”’')\]]*$/u.test(left) ? 3 : pause >= 220 ? 2 :
+        /^(?:and|but|so|yet|because|although|while|which|where|when)\b/i.test(right) ? 1 : 0;
+      return [{ offset, next, score }];
+    });
+    const cut = candidates.filter((item) => item.offset >= MIN_SOFT_BREAK && end - start - item.next >= 20)
+      .sort((a, b) => b.score - a.score || b.offset - a.offset)[0] ?? candidates.at(-1);
+    if (!cut) {
+      // Never slice a word (or a URL) merely because it exceeds the preferred width.
+      const nextSpace = text.indexOf(" ", start + CAPTION_LENGTH);
+      if (nextSpace < 0 || nextSpace >= end) break;
+      emit(start, nextSpace);
+      start = nextSpace + 1;
+    } else {
+      emit(start, start + cut.offset);
+      start += cut.next;
+    }
+  }
+  if (start < end) emit(start, end);
 }
 
 export function cuesToSentences(input: CaptionCue[]): CaptionSentence[] {
   const ordered = input
-    .filter((cue) => Number.isFinite(cue.startMs) && Number.isFinite(cue.endMs) && Boolean(normalizeText(cue.text)))
     .map((cue) => ({ ...cue, text: normalizeText(cue.text), endMs: Math.max(cue.endMs, cue.startMs + 1) }))
+    .filter((cue) => Number.isFinite(cue.startMs) && Number.isFinite(cue.endMs) && Boolean(cue.text))
     .sort((left, right) => left.startMs - right.startMs);
-  const cues = collapseRollingCues(ordered).flatMap(splitCue);
   const sentences: CaptionSentence[] = [];
-  let buffer: CaptionCue | undefined;
+  let block: PositionedCue[] = [];
+  let text = "";
 
-  const flush = (): void => {
-    if (!buffer?.text) return;
-    sentences.push({
-      id: `${Math.round(buffer.startMs)}-${sentences.length}`,
-      text: normalizeText(buffer.text),
-      startMs: buffer.startMs,
-      endMs: Math.max(buffer.endMs, buffer.startMs + 1)
-    });
-    buffer = undefined;
-  };
-
-  for (const cue of cues) {
-    if (!buffer) {
-      buffer = { ...cue };
-    } else {
-      const gap = cue.startMs - buffer.endMs;
-      const complete = /[.!?]["')\]]*$/.test(buffer.text);
-      const tooLong = buffer.text.length >= 180 || buffer.endMs - buffer.startMs >= 12_000;
-      if (complete || gap > 1400 || tooLong) {
-        flush();
-        buffer = { ...cue };
-      } else {
-        const addition = removeOverlap(buffer.text, cue.text);
-        buffer.text = normalizeText(`${buffer.text} ${addition}`);
-        buffer.endMs = Math.max(buffer.endMs, cue.endMs);
-      }
+  function flushBlock() {
+    if (!block.length) return;
+    const breaks = new Map(block.map((cue, index) => [cue.offset, cue.startMs - (block[index - 1]?.endMs ?? cue.startMs)]));
+    let cueIndex = 0;
+    const timeAt = (offset: number) => {
+      while (block[cueIndex + 1] && offset >= block[cueIndex + 1]!.offset) cueIndex++;
+      const cue = block[cueIndex]!;
+      const fraction = Math.min(1, (offset - cue.offset) / cue.text.length);
+      const end = block[cueIndex + 1]
+        ? Math.min(cue.endMs, block[cueIndex + 1]!.startMs)
+        : cue.endMs;
+      return cue.startMs + fraction * Math.max(0, end - cue.startMs);
+    };
+    const emit = (start: number, end: number) => {
+      const startMs = timeAt(start);
+      const endMs = timeAt(end);
+      sentences.push({ id: `${Math.round(startMs)}-${sentences.length}`, text: text.slice(start, end), startMs, endMs: Math.max(startMs + 1, endMs) });
+    };
+    let start = 0;
+    for (const match of text.matchAll(/[.!?。！？]+["”’')\]]*/gu)) {
+      const end = match.index + match[0].length;
+      if (match[0] === "." && isAbbreviation(text, match.index)) continue;
+      if (/^[.!?]/.test(match[0]) && end < text.length && text[end] !== " ") continue;
+      splitLongCaption(text, start, end, breaks, emit);
+      start = end + (text[end] === " " ? 1 : 0);
     }
+    splitLongCaption(text, start, text.length, breaks, emit);
+    block = [];
+    text = "";
   }
-  flush();
+
+  for (const cue of collapseRollingCues(ordered)) {
+    const previous = block.at(-1);
+    if (previous && cue.startMs - previous.endMs > JOIN_GAP_MS) flushBlock();
+    const addition = previous && block.length && cue.startMs < previous.endMs
+      ? removeOverlap(previous.text, cue.text)
+      : cue.text;
+    if (!addition) continue;
+    const offset = text.length + (text ? 1 : 0);
+    block.push({ ...cue, text: addition, offset });
+    text += (text ? " " : "") + addition;
+  }
+  flushBlock();
   return sentences;
 }
 
