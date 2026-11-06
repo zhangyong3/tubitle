@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "./shared/settings";
+import { requestSubtitleTranslation } from "./shared/subtitle-translation";
 import type { ExtensionMessage, MessageResponse } from "./shared/types";
 
 vi.mock("./background-cache", () => ({
@@ -21,6 +22,7 @@ describe("Microsoft Translator from the extension background", () => {
     vi.resetModules();
     request.mockReset().mockImplementation(async () => translated());
     vi.stubGlobal("fetch", request);
+    let onConnect: (port: unknown) => void;
     vi.stubGlobal("chrome", {
       runtime: {
         onMessage: {
@@ -28,7 +30,24 @@ describe("Microsoft Translator from the extension background", () => {
             send = (message) => new Promise((resolve) => handler(message, {}, resolve));
           }
         },
-        onConnect: { addListener: vi.fn() }
+        onConnect: { addListener: (handler: typeof onConnect) => { onConnect = handler; } },
+        connect: ({ name }: { name: string }) => {
+          let toBackground: (message: unknown) => void;
+          let toContent: (message: unknown) => void;
+          let onBackgroundDisconnect: () => void;
+          onConnect({
+            name,
+            onMessage: { addListener: (handler: typeof toBackground) => { toBackground = handler; } },
+            onDisconnect: { addListener: (handler: typeof onBackgroundDisconnect) => { onBackgroundDisconnect = handler; } },
+            postMessage: (message: unknown) => toContent(message)
+          });
+          return {
+            onMessage: { addListener: (handler: typeof toContent) => { toContent = handler; } },
+            onDisconnect: { addListener() {} },
+            postMessage: (message: unknown) => toBackground(message),
+            disconnect: () => onBackgroundDisconnect()
+          };
+        }
       },
       storage: { local: { get: async () => ({ settings: { ...DEFAULT_SETTINGS, microsoftTranslatorKey: "test-key" } }) } }
     });
@@ -96,6 +115,26 @@ describe("Microsoft Translator from the extension background", () => {
     expect(request).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await subtitle("A subtitle after the cooldown.")).toEqual({ ok: true, data: "译文" });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels retries and queued subtitles when their caption session closes", async () => {
+    request.mockResolvedValueOnce(throttled("2"));
+    const session = new AbortController();
+    const scoped = (text: string) => requestSubtitleTranslation({
+      type: "TRANSLATE", provider: "microsoft", text, sourceLanguage: "en"
+    }, session.signal).catch((error: unknown) => error);
+    const first = scoped("Subtitle waiting for a retry.");
+    const queued = scoped("Subtitle still in the queue.");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(request).toHaveBeenCalledTimes(1);
+    session.abort();
+    expect(await first).toMatchObject({ name: "AbortError" });
+    expect(await queued).toMatchObject({ name: "AbortError" });
+    await vi.runAllTimersAsync();
+    expect(request).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await subtitle("Another tab can still translate.")).toEqual({ ok: true, data: "译文" });
     expect(request).toHaveBeenCalledTimes(2);
   });
 });

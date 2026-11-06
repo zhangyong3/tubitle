@@ -5,11 +5,13 @@ import { ANALYSIS_QUERY_KEY } from "./shared/analysis-stream";
 import { cacheTranslation, getCachedTranslation } from "./background-cache";
 import { MicrosoftRateLimitError, requestAnalysis, translateLocally } from "./local-providers";
 import { SmoothRateLimit } from "./shared/smooth-rate-limit";
+import { SUBTITLE_TRANSLATION_PORT, type SubtitleTranslationRequest } from "./shared/subtitle-translation";
 
 interface TranslationJob {
   key?: string; text: string; provider: TranslationProvider;
   priority: "current" | "prefetch";
   settings: Awaited<ReturnType<typeof getSettings>>; source: string;
+  signal?: AbortSignal;
   resolve: (value: string) => void; reject: (error: unknown) => void;
 }
 
@@ -35,9 +37,26 @@ function translationKey(provider: TranslationProvider, text: string, source: str
   return `${provider}\0${source || "auto"}\0${target}\0${text}`;
 }
 
-async function waitForTencentSlot(): Promise<void> {
+async function waitForDelay(delay: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  if (delay <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    function abort() {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, delay);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+async function waitForTencentSlot(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   const delay = tencentRateLimit.reserve();
-  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+  await waitForDelay(delay, signal);
 }
 
 async function runMicrosoftTranslation(job: TranslationJob): Promise<string> {
@@ -48,11 +67,13 @@ async function runMicrosoftTranslation(job: TranslationJob): Promise<string> {
   let retryWait = 0;
   for (let attempt = 0; ; attempt += 1) {
     const delay = microsoftNextRequestAt - Date.now();
-    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (delay > 0) await waitForDelay(delay, job.signal);
+    job.signal?.throwIfAborted();
     microsoftNextRequestAt = Date.now() + interval;
     try {
-      return await translateLocally(job.provider, job.text, job.settings, job.source);
+      return await translateLocally(job.provider, job.text, job.settings, job.source, job.signal);
     } catch (error) {
+      job.signal?.throwIfAborted();
       if (!(error instanceof MicrosoftRateLimitError)) throw error;
       const wait = Math.max(1500 * 2 ** attempt, error.retryAfterMs);
       const now = Date.now();
@@ -76,28 +97,35 @@ async function runTranslation(job: TranslationJob): Promise<string> {
   if (job.provider === "microsoft") return runMicrosoftTranslation(job);
   const attempts = job.provider === "tencent" ? 3 : 1;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (job.provider === "tencent") await waitForTencentSlot();
+    if (job.provider === "tencent") await waitForTencentSlot(job.signal);
+    job.signal?.throwIfAborted();
     try {
-      return await translateLocally(job.provider, job.text, job.settings, job.source);
+      return await translateLocally(job.provider, job.text, job.settings, job.source, job.signal);
     } catch (error) {
+      job.signal?.throwIfAborted();
       if (!isTencentRateLimit(error) || attempt === attempts - 1) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+      await waitForDelay(600 * (attempt + 1), job.signal);
     }
   }
   throw new Error("翻译请求失败");
 }
 
-async function enqueueTranslation(text: string, provider: TranslationProvider, priority: "current" | "prefetch" = "prefetch", trackLanguage = ""): Promise<string> {
+async function enqueueTranslation(text: string, provider: TranslationProvider, priority: "current" | "prefetch" = "prefetch", trackLanguage = "", signal?: AbortSignal): Promise<string> {
   const settings = await getSettings();
+  signal?.throwIfAborted();
   const source = sourceLanguage(text, trackLanguage);
   if (shouldSkipTranslation(source, settings)) return "";
   const key = translationKey(provider, text, source, settings.targetLanguage);
   const memory = memoryCache.get(key);
   if (memory) return memory;
-  const existing = pending.get(key);
+  const existing = signal ? undefined : pending.get(key);
   if (existing) return existing;
   const disk = await getCachedTranslation(key).catch(() => undefined);
+  signal?.throwIfAborted();
   if (disk) { memoryCache.set(key, disk); return disk; }
+  // Cancelable requests belong to one caption session. Do not tie another tab's
+  // result to this tab's abort signal. Completed translations still share the cache.
+  if (signal) return scheduleTranslation({ key, text, provider, priority, settings, source, signal });
   const pendingAfterCacheLookup = pending.get(key);
   if (pendingAfterCacheLookup) return pendingAfterCacheLookup;
   const promise = scheduleTranslation({ key, text, provider, priority, settings, source }).finally(() => pending.delete(key));
@@ -106,11 +134,20 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
 }
 
 function scheduleTranslation(input: Omit<TranslationJob, "resolve" | "reject">): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const job = { ...input, resolve, reject };
+  const signal = input.signal;
+  let abort: (() => void) | undefined;
+  return new Promise<string>((resolve, reject) => {
+    signal?.throwIfAborted();
+    const job: TranslationJob = { ...input, resolve, reject };
+    abort = () => {
+      const index = queue.indexOf(job);
+      if (index >= 0) queue.splice(index, 1);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
     if (job.priority === "current") queue.unshift(job); else queue.push(job);
     void drainTranslationQueue();
-  });
+  }).finally(() => { if (abort) signal?.removeEventListener("abort", abort); });
 }
 
 async function drainTranslationQueue(): Promise<void> {
@@ -123,6 +160,7 @@ async function drainTranslationQueue(): Promise<void> {
     const microsoft = job.provider === "microsoft";
     if (microsoft) microsoftActive = true; else activeTranslations += 1;
     void runTranslation(job).then((translation) => {
+      job.signal?.throwIfAborted();
       if (job.key !== undefined) {
         memoryCache.set(job.key, translation);
         void cacheTranslation(job.key, translation).catch(() => undefined);
@@ -170,6 +208,22 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 });
 
 chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === SUBTITLE_TRANSLATION_PORT) {
+    const controller = new AbortController();
+    let started = false;
+    port.onDisconnect.addListener(() => controller.abort());
+    function reply(response: MessageResponse<string>) {
+      if (controller.signal.aborted) return;
+      try { port.postMessage(response); } catch { controller.abort(); }
+    }
+    port.onMessage.addListener((message: SubtitleTranslationRequest) => {
+      if (started || message.type !== "TRANSLATE") return;
+      started = true;
+      void enqueueTranslation(message.text, message.provider, message.priority, message.sourceLanguage, controller.signal)
+        .then((data) => reply({ ok: true, data }), (error: unknown) => reply({ ok: false, error: errorMessage(error) }));
+    });
+    return;
+  }
   if (port.name !== "analysis-stream") return;
   let controller: AbortController | undefined;
   port.onDisconnect.addListener(() => controller?.abort());

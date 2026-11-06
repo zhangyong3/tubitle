@@ -7,7 +7,7 @@ import { SubtitleOverlay } from "./overlay";
 import { prefetchBatchPlan, type PrefetchBatchState } from "./prefetch";
 import { shortcutFromEvent, shortcutsMatch } from "./shortcuts";
 import { findSentenceIndex, navigationTargetIndex, type NavigationDirection } from "./navigation";
-import { sendMessage } from "../shared/messaging";
+import { requestSubtitleTranslation } from "../shared/subtitle-translation";
 import { getSettings, updateSettings } from "../shared/settings";
 import { ANALYSIS_QUERY_KEY } from "../shared/analysis-stream";
 import { normalizeDictionaryWord } from "../shared/dictionary-lookup";
@@ -25,10 +25,13 @@ let sentences: CaptionSentence[] = [];
 let activeIndex = -1;
 let captionLanguage = "";
 let latestTracks: CaptionTrack[] = [];
+let captionVideoId: string | null = null;
 let loadVersion = 0;
 let pausedByHover = false;
 let lastLayoutUpdate = 0;
-let captionsVisible: boolean | undefined;
+let captionSession: AbortController | undefined;
+let observedCaptionButton: HTMLButtonElement | null = null;
+let captionButtonObserver: MutationObserver | undefined;
 let panelLayoutFrame: number | undefined;
 let unavailableSubtitleTimer: number | undefined;
 let transcriptLoading = false;
@@ -54,8 +57,9 @@ function videoElement(): HTMLVideoElement | null {
   return document.querySelector("video.html5-main-video, video");
 }
 
-function isWatchPage(): boolean {
-  return location.hostname === "www.youtube.com" && location.pathname === "/watch" && Boolean(new URL(location.href).searchParams.get("v"));
+function watchVideoId(url = location.href): string | null {
+  const page = new URL(url);
+  return page.hostname === "www.youtube.com" && page.pathname === "/watch" ? page.searchParams.get("v") : null;
 }
 
 function currentVideoTitle(): string {
@@ -66,7 +70,7 @@ function currentVideoTitle(): string {
 
 function transcriptSnapshot(video = videoElement()): TranscriptPanelSnapshot {
   return {
-    videoId: new URL(location.href).searchParams.get("v") ?? "",
+    videoId: captionVideoId ?? "",
     videoTitle: currentVideoTitle(),
     sentences: sentences.map((sentence) => ({
       ...sentence,
@@ -121,15 +125,12 @@ const learningPanel = new PageLearningPanel({
 });
 
 function applySettings(): void {
-  overlay.setEnabled(settings.enabled);
+  syncYouTubeCaptionVisibility();
+  overlay.setEnabled(Boolean(captionSession));
   overlay.setChineseVisible(settings.showChinese);
   overlay.setAppearance(settings.subtitleAppearance);
   overlay.setPosition(settings.subtitlePosition);
-  if (settings.enabled && sentences.length > 0 && !nativeCaptionStyle.isConnected) {
-    document.documentElement.append(nativeCaptionStyle);
-  } else if (!settings.enabled || sentences.length === 0) {
-    nativeCaptionStyle.remove();
-  }
+  syncNativeCaptionStyle();
   if (settings.showChinese && activeIndex >= 0) void translateSentence(sentences[activeIndex]!);
 }
 
@@ -143,10 +144,11 @@ function requestTranscript(videoId: string): Promise<TranscriptCue[]> {
     const onResponse = (event: Event): void => {
       const detail = (event as CustomEvent<{
         requestId?: string;
+        videoId?: string;
         cues?: TranscriptCue[];
         error?: string;
       }>).detail;
-      if (detail?.requestId !== requestId) return;
+      if (detail?.requestId !== requestId || detail.videoId !== videoId) return;
       window.clearTimeout(timeout);
       document.removeEventListener("tubitle:transcript", onResponse);
       if (detail.error) reject(new Error(detail.error));
@@ -159,10 +161,9 @@ function requestTranscript(videoId: string): Promise<TranscriptCue[]> {
   });
 }
 
-async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Promise<void> {
-  latestTracks = tracks;
+function resetCaptionData(): void {
+  ++loadVersion;
   captionLanguage = "";
-  const version = ++loadVersion;
   window.clearTimeout(unavailableSubtitleTimer);
   unavailableSubtitleTimer = undefined;
   sentences = [];
@@ -175,8 +176,37 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
   prefetchStateByProvider.clear();
   overlay.hideSentence();
   overlay.clearStatus();
-  transcriptLoading = true;
+  transcriptLoading = false;
   transcriptError = "";
+}
+
+function syncCaptionVideo(): string | null {
+  const videoId = watchVideoId();
+  if (videoId === captionVideoId) return videoId;
+  captionVideoId = videoId;
+  latestTracks = [];
+  pausedByHover = false;
+  stopCaptionSession();
+  resetCaptionData();
+  transcriptLoading = Boolean(videoId);
+  learningPanel.setVisible(false);
+  overlay.setEnabled(false);
+  syncNativeCaptionStyle();
+  publishTranscriptSnapshot();
+  return videoId;
+}
+
+function isCurrentCaptionLoad(version: number): boolean {
+  return version === loadVersion && captionVideoId === watchVideoId();
+}
+
+async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Promise<void> {
+  const videoId = syncCaptionVideo();
+  if (!settings || !videoId || watchVideoId(pageUrl) !== videoId) return;
+  latestTracks = tracks;
+  resetCaptionData();
+  const version = loadVersion;
+  transcriptLoading = true;
   applySettings();
   publishTranscriptSnapshot();
   try {
@@ -184,8 +214,7 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
     try {
       loaded = await fetchBilingualCaptions(tracks, settings);
     } catch (captionError) {
-      const videoId = new URL(pageUrl).searchParams.get("v");
-      if (!videoId) throw captionError;
+      if (!isCurrentCaptionLoad(version)) return;
       try {
         const transcript = await requestTranscript(videoId);
         const fallbackSentences = cuesToSentences(transcript);
@@ -197,7 +226,7 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
         throw new Error(`${primary}；文字稿回退失败：${fallback}`);
       }
     }
-    if (version !== loadVersion) return;
+    if (!isCurrentCaptionLoad(version)) return;
     captionLanguage = loaded.sourceLanguage ?? "";
     sentences = loaded.sentences;
     for (const [id, translation] of loaded.officialTranslations) {
@@ -209,7 +238,7 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
     overlay.clearStatus();
     publishTranscriptSnapshot();
   } catch (error) {
-    if (version !== loadVersion) return;
+    if (!isCurrentCaptionLoad(version)) return;
     const detail = errorMessage(error);
     console.warn("[Tubetitle] 字幕加载失败", { videoUrl: pageUrl, detail, error });
     const notice = captionErrorNotice(detail);
@@ -218,7 +247,7 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
     overlay.showStatus(notice, true);
     publishTranscriptSnapshot();
     unavailableSubtitleTimer = window.setTimeout(() => {
-      if (version !== loadVersion) return;
+      if (!isCurrentCaptionLoad(version)) return;
       overlay.clearStatus();
       overlay.hideSentence();
       unavailableSubtitleTimer = undefined;
@@ -239,7 +268,8 @@ async function getSentenceTranslation(
   provider: ExtensionSettings["provider"],
   userRequested = false
 ): Promise<string> {
-  if (skipSentenceTranslation(sentence)) return "";
+  const signal = captionSession?.signal;
+  if (!signal || captionVideoId !== watchVideoId() || skipSentenceTranslation(sentence)) return "";
   const version = loadVersion;
   const target = settings.targetLanguage;
   const official = officialTranslations.get(sentence.id);
@@ -250,27 +280,29 @@ async function getSentenceTranslation(
   const pending = pendingTranslations.get(key);
   if (pending) return pending;
 
-  const request = sendMessage<string>({
+  const request = requestSubtitleTranslation({
     type: "TRANSLATE",
     text: sentence.text,
     sourceLanguage: sourceLanguage(sentence.text, captionLanguage),
     provider,
     priority: userRequested || sentence.id === sentences[activeIndex]?.id ? "current" : "prefetch"
-  }).then((translation) => {
-    if (version !== loadVersion || target !== settings.targetLanguage) return "";
+  }, signal).then((translation) => {
+    if (signal.aborted || !isCurrentCaptionLoad(version) || target !== settings.targetLanguage) return "";
     translation = decodeTextEntities(translation);
     translations.set(key, translation);
     translationErrors.delete(sentence.id);
     learningPanel.setTranslation(sentence.id, translation);
     return translation;
   }).finally(() => {
-    pendingTranslations.delete(key);
+    if (pendingTranslations.get(key) === request) pendingTranslations.delete(key);
   });
   pendingTranslations.set(key, request);
   return request;
 }
 
 async function translateSentence(sentence: CaptionSentence): Promise<void> {
+  const signal = captionSession?.signal;
+  if (!signal) return;
   if (skipSentenceTranslation(sentence)) {
     overlay.showTranslation(sentence.id, "");
     return;
@@ -280,14 +312,14 @@ async function translateSentence(sentence: CaptionSentence): Promise<void> {
   const target = settings.targetLanguage;
   try {
     const translation = await getSentenceTranslation(sentence, provider);
-    if (version !== loadVersion || target !== settings.targetLanguage) return;
+    if (signal.aborted || !isCurrentCaptionLoad(version) || target !== settings.targetLanguage) return;
     translationErrors.delete(sentence.id);
     learningPanel.setTranslation(sentence.id, translation);
     if (settings.showChinese && (provider === settings.provider || officialTranslations.has(sentence.id))) {
       overlay.showTranslation(sentence.id, translation);
     }
   } catch (error) {
-    if (version !== loadVersion || target !== settings.targetLanguage) return;
+    if (signal.aborted || !isCurrentCaptionLoad(version) || target !== settings.targetLanguage) return;
     const message = errorMessage(error);
     translationErrors.set(sentence.id, message);
     learningPanel.setTranslation(sentence.id, undefined, message);
@@ -296,6 +328,7 @@ async function translateSentence(sentence: CaptionSentence): Promise<void> {
 }
 
 function scheduleTranslationPrefetch(currentIndex: number): void {
+  if (!captionSession) return;
   const provider = settings.provider;
   if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
   const plan = prefetchBatchPlan(
@@ -324,6 +357,7 @@ function scheduleTranslationPrefetch(currentIndex: number): void {
 }
 
 function prefetchCaptionIndexes(indexes: number[]): void {
+  if (!captionSession) return;
   const provider = settings.provider;
   if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
   for (const index of new Set(indexes)) {
@@ -341,6 +375,9 @@ function prefetchCaptionIndexes(indexes: number[]): void {
 }
 
 function drainTranslationQueue(): void {
+  const signal = captionSession?.signal;
+  if (!signal) return;
+  const version = loadVersion;
   while (activeTranslationWorkers < MAX_TRANSLATION_WORKERS && translationQueue.length > 0) {
     const item = translationQueue.shift()!;
     queuedTranslationKeys.delete(item.key);
@@ -348,6 +385,7 @@ function drainTranslationQueue(): void {
     activeTranslationWorkers += 1;
     void getSentenceTranslation(item.sentence, item.provider)
       .catch((error: unknown) => {
+        if (signal.aborted || !isCurrentCaptionLoad(version)) return;
         const message = errorMessage(error);
         translationErrors.set(item.sentence.id, message);
         learningPanel.setTranslation(item.sentence.id, undefined, message);
@@ -368,22 +406,25 @@ function drainTranslationQueue(): void {
 }
 
 async function studySentenceTranslation(videoId: string, id: string): Promise<void> {
-  if (!videoId || videoId !== new URL(location.href).searchParams.get("v")) return;
+  const signal = captionSession?.signal;
+  if (!signal) return;
+  if (!videoId || videoId !== captionVideoId || videoId !== watchVideoId()) return;
   const sentence = sentences.find((item) => item.id === id);
   if (!sentence) return;
   const version = loadVersion;
   try {
     const translation = await getSentenceTranslation(sentence, settings.provider, true);
-    if (version !== loadVersion) return;
+    if (signal.aborted || !isCurrentCaptionLoad(version)) return;
     learningPanel.studyTranslation({
       videoId, sentence, translation: translation || undefined, error: translation ? undefined : "这句没有可保存的译文"
     });
   } catch (error) {
-    if (version === loadVersion) learningPanel.studyTranslation({ videoId, sentence, error: errorMessage(error) });
+    if (!signal.aborted && isCurrentCaptionLoad(version)) learningPanel.studyTranslation({ videoId, sentence, error: errorMessage(error) });
   }
 }
 
 async function analyzeCurrentSentence(): Promise<void> {
+  if (!captionSession) return;
   const sentence = sentences[activeIndex];
   if (!sentence) return;
   try {
@@ -403,6 +444,7 @@ async function analyzeCurrentSentence(): Promise<void> {
 }
 
 function openDictionary(value: string): void {
+  if (!captionSession) return;
   const word = normalizeDictionaryWord(value);
   if (word) learningPanel.lookupWord(word);
 }
@@ -423,7 +465,7 @@ function activateSentence(index: number): void {
 
 function seekTo(index: number, video = videoElement()): void {
   const sentence = sentences[index];
-  if (!sentence || !video) return;
+  if (!captionSession || !sentence || !video) return;
   video.currentTime = sentence.startMs / 1000 + 0.01;
   activateSentence(index);
   void video.play().catch(() => undefined);
@@ -437,7 +479,7 @@ function seekRelative(direction: NavigationDirection): void {
 }
 
 function handleShortcut(event: KeyboardEvent): void {
-  if (!settings.enabled || event.repeat) return;
+  if (!captionSession || event.repeat) return;
   const target = event.target as HTMLElement | null;
   if (target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName ?? "")) return;
   const shortcut = shortcutFromEvent(event);
@@ -464,30 +506,70 @@ function schedulePanelLayoutUpdate(): void {
   panelLayoutFrame = window.requestAnimationFrame(() => {
     panelLayoutFrame = undefined;
     const video = videoElement();
-    if (!settings?.enabled || !video || !isWatchPage() || document.fullscreenElement) return;
+    if (!captionSession || !video || document.fullscreenElement) return;
     learningPanel.updateLayout(video.getBoundingClientRect());
   });
 }
 
+function syncNativeCaptionStyle(): void {
+  if (captionSession && sentences.length) {
+    if (!nativeCaptionStyle.isConnected) document.documentElement.append(nativeCaptionStyle);
+  } else {
+    nativeCaptionStyle.remove();
+  }
+}
+
+function stopCaptionSession(): void {
+  captionSession?.abort();
+  captionSession = undefined;
+  pendingTranslations.clear();
+  translationQueue.length = 0;
+  queuedTranslationKeys.clear();
+  prefetchStateByProvider.clear();
+  activeIndex = -1;
+}
+
 function syncYouTubeCaptionVisibility(): void {
-  const button = document.querySelector<HTMLButtonElement>("#movie_player .ytp-subtitles-button");
-  // Some transcript-only videos have no native CC control; retain their subtitles.
-  const visible = button?.getAttribute("aria-pressed") !== "false";
-  if (captionsVisible === visible) return;
-  captionsVisible = visible;
+  const videoId = syncCaptionVideo();
+  const button = settings?.enabled && videoId && videoElement()
+    ? document.querySelector<HTMLButtonElement>("#movie_player .ytp-subtitles-button")
+    : null;
+  if (button !== observedCaptionButton) {
+    captionButtonObserver?.disconnect();
+    observedCaptionButton = button;
+    if (button) {
+      captionButtonObserver ??= new MutationObserver(syncYouTubeCaptionVisibility);
+      captionButtonObserver.observe(button, { attributes: true, attributeFilter: ["aria-pressed", "disabled", "aria-disabled"] });
+    }
+  }
+  const visible = !button?.disabled && button?.getAttribute("aria-disabled") !== "true" &&
+    button?.getAttribute("aria-pressed") === "true";
+  if (Boolean(captionSession) === visible) return;
+  if (visible) {
+    captionSession = new AbortController();
+    lastLayoutUpdate = -Infinity;
+  } else {
+    stopCaptionSession();
+    overlay.hideSentence();
+  }
+  syncNativeCaptionStyle();
+  overlay.setEnabled(visible);
   overlay.setCaptionsVisible(visible);
+  learningPanel.setVisible(visible && !document.fullscreenElement);
   if (!visible && pausedByHover) {
     pausedByHover = false;
     if (settings.resumeAfterHover) void videoElement()?.play().catch(() => undefined);
   }
+  // A load attempted with CC off could not use the player's transcript panel.
+  if (visible && transcriptError && !sentences.length) void loadTracks(latestTracks);
 }
 
 function tick(timestamp: number): void {
+  syncYouTubeCaptionVisibility();
   const video = videoElement();
-  const panelVisible = Boolean(settings?.enabled && video && isWatchPage() && !document.fullscreenElement);
+  const panelVisible = Boolean(captionSession && !document.fullscreenElement);
   learningPanel.setVisible(panelVisible);
-  if (settings?.enabled) {
-    syncYouTubeCaptionVisibility();
+  if (captionSession) {
     if (video) {
       if (timestamp - lastLayoutUpdate >= 200) {
         const fullscreenParent = document.fullscreenElement;
@@ -514,6 +596,8 @@ document.addEventListener("tubetitle:tracks", (event) => {
   const detail = (event as CustomEvent<{ tracks: CaptionTrack[]; url?: string }>).detail;
   if (detail?.tracks) void loadTracks(detail.tracks, detail.url);
 });
+document.addEventListener("yt-navigate-finish", syncCaptionVideo);
+window.addEventListener("popstate", syncCaptionVideo);
 document.addEventListener("keydown", handleShortcut, true);
 document.addEventListener("scroll", schedulePanelLayoutUpdate, { capture: true, passive: true });
 window.addEventListener("resize", schedulePanelLayoutUpdate, { passive: true });
@@ -539,6 +623,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       translationErrors.clear();
     }
     settings = next;
+    syncCaptionVideo();
     if (languagesChanged) { void loadTracks(latestTracks); return; }
     applySettings();
     publishTranscriptSnapshot();

@@ -2,8 +2,9 @@ import { captionTracksForVideo, type YouTubePlayerResponse } from "./shared/capt
 import {
   findSearchableTranscriptParams,
   findTranscriptParams,
+  transcriptCuesFromResponse,
   transcriptCuesFromRows,
-  transcriptCuesFromResponse
+  type TranscriptCue
 } from "./shared/youtube-transcript";
 
 declare global {
@@ -72,52 +73,6 @@ async function youtubeResponseError(response: Response): Promise<Error> {
   return new Error(`读取 YouTube 文字稿失败 (${response.status})${suffix}`);
 }
 
-function readNativeTranscript() {
-  const expandedPanels = Array.from(document.querySelectorAll<HTMLElement>(
-    'ytd-engagement-panel-section-list-renderer[visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]'
-  ));
-  const modernPanel = expandedPanels.find((panel) => panel.querySelector("transcript-segment-view-model"));
-  const classicPanel = expandedPanels.find((panel) => panel.querySelector("ytd-transcript-segment-renderer"));
-  const modernSegments = modernPanel
-    ? Array.from(modernPanel.querySelectorAll("transcript-segment-view-model"))
-    : [];
-  const rows = modernSegments.length > 0
-    ? modernSegments.map((segment) => ({
-      timestamp: segment.querySelector(".ytwTranscriptSegmentViewModelTimestamp")?.textContent ?? "",
-      text: segment.querySelector("span.ytAttributedStringHost")?.textContent ?? ""
-    }))
-    : Array.from(classicPanel?.querySelectorAll("ytd-transcript-segment-renderer") ?? []).map((segment) => ({
-      timestamp: segment.querySelector(".segment-timestamp")?.textContent ?? "",
-      text: segment.querySelector(".segment-text")?.textContent ?? ""
-    }));
-  return transcriptCuesFromRows(rows);
-}
-
-async function fetchNativeTranscript(videoId: string) {
-  const startedAt = Date.now();
-  let button = document.querySelector<HTMLButtonElement>(
-    "ytd-video-description-transcript-section-renderer button:not([disabled])"
-  );
-  if (!button) {
-    document.querySelector<HTMLElement>("ytd-watch-metadata #description #expand")?.click();
-    while (!button && Date.now() - startedAt < 1500) {
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
-      button = document.querySelector<HTMLButtonElement>(
-        "ytd-video-description-transcript-section-renderer button:not([disabled])"
-      );
-    }
-  }
-  button?.click();
-
-  while (Date.now() - startedAt < 15_000) {
-    if (new URL(location.href).searchParams.get("v") !== videoId) throw new Error("视频已经切换");
-    const cues = readNativeTranscript();
-    if (cues.length > 0) return cues;
-    await new Promise((resolve) => window.setTimeout(resolve, 120));
-  }
-  throw new Error(button ? "YouTube 页面文字稿加载超时" : "YouTube 页面没有文字稿入口");
-}
-
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -151,7 +106,13 @@ document.addEventListener("tubetitle:request-tracks", () => {
   publishTracks();
 });
 
+function watchDataVideoId(data: unknown): string | undefined {
+  return (data as { currentVideoEndpoint?: { watchEndpoint?: { videoId?: string } } } | null | undefined)
+    ?.currentVideoEndpoint?.watchEndpoint?.videoId;
+}
+
 async function fetchTranscriptFromApi(videoId: string) {
+  if (new URL(location.href).searchParams.get("v") !== videoId) throw new Error("视频已经切换");
   const watchData = (document.querySelector("ytd-watch-flexy") as (HTMLElement & { data?: unknown }) | null)?.data;
   const apiKey = window.ytcfg?.get?.("INNERTUBE_API_KEY");
   const context = window.ytcfg?.get?.("INNERTUBE_CONTEXT");
@@ -174,27 +135,27 @@ async function fetchTranscriptFromApi(videoId: string) {
   if (client?.visitorData) headers["X-Goog-Visitor-Id"] = client.visitorData;
   await addYouTubeSessionHeaders(headers);
 
-  let nextResponse: Response | undefined;
+  let nextData: unknown;
   try {
-    nextResponse = await fetchWithTimeout(`/youtubei/v1/next?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
+    const nextResponse = await fetchWithTimeout(`/youtubei/v1/next?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
       method: "POST",
       credentials: "include",
       headers,
       body: JSON.stringify({ context, videoId, contentCheckOk: true, racyCheckOk: true })
     }, 2500);
+    if (nextResponse.ok) nextData = await nextResponse.json();
   } catch {
-    // The page data below may already contain a usable transcript endpoint.
+    // Use page data only if it explicitly identifies the requested video.
   }
-  let nextData: unknown;
-  if (nextResponse?.ok) nextData = await nextResponse.json();
-  let params = findSearchableTranscriptParams(nextData)
-    ?? findSearchableTranscriptParams(watchData)
-    ?? findSearchableTranscriptParams(window.ytInitialData);
-  params ??= findTranscriptParams(nextData)
-    ?? findTranscriptParams(watchData)
-    ?? findTranscriptParams(window.ytInitialData);
+  const nextVideoId = watchDataVideoId(nextData);
+  const sources = [
+    nextVideoId && nextVideoId !== videoId ? undefined : nextData,
+    ...[watchData, window.ytInitialData].filter((data) => watchDataVideoId(data) === videoId)
+  ];
+  const params = sources.map((data) => findSearchableTranscriptParams(data) ?? findTranscriptParams(data)).find(Boolean);
   if (!params) throw new Error("YouTube 没有返回当前视频的文字稿入口");
 
+  if (new URL(location.href).searchParams.get("v") !== videoId) throw new Error("视频已经切换");
   let response: Response;
   try {
     response = await fetchWithTimeout(`/youtubei/v1/get_transcript?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
@@ -209,27 +170,95 @@ async function fetchTranscriptFromApi(videoId: string) {
   if (!response.ok) throw await youtubeResponseError(response);
   const cues = transcriptCuesFromResponse(await response.json());
   if (cues.length === 0) throw new Error("YouTube 文字稿为空");
+  if (new URL(location.href).searchParams.get("v") !== videoId) throw new Error("视频已经切换");
   return cues;
 }
 
-async function fetchTranscript(videoId: string) {
-  let apiError: Error | undefined;
-  let cues: ReturnType<typeof transcriptCuesFromResponse> = [];
-  try {
-    cues = await fetchTranscriptFromApi(videoId);
-  } catch (error) {
-    apiError = error instanceof Error ? error : new Error("读取 YouTube 文字稿失败");
+type WatchElement = HTMLElement & { data?: unknown };
+const TRANSCRIPT_BUTTON = "ytd-video-description-transcript-section-renderer button:not([disabled])";
+
+function currentNativeWatch(videoId: string): WatchElement | undefined {
+  if (new URL(location.href).searchParams.get("v") !== videoId) return;
+  const cc = document.querySelector<HTMLButtonElement>("#movie_player .ytp-subtitles-button");
+  if (!cc || cc.disabled || cc.getAttribute("aria-disabled") === "true" || cc.getAttribute("aria-pressed") !== "true") return;
+  const watch = document.querySelector<WatchElement>("ytd-watch-flexy[video-id]");
+  const dataVideoId = watchDataVideoId(watch?.data);
+  if (!watch || watch.getAttribute("video-id") !== videoId || (dataVideoId && dataVideoId !== videoId)) return;
+  if (getPlayerResponse(videoId)?.videoDetails?.videoId !== videoId) return;
+  return watch;
+}
+
+function readNativeTranscript(watch: WatchElement, expandedOnly = true): TranscriptCue[] {
+  const panels = watch.querySelectorAll("ytd-engagement-panel-section-list-renderer" +
+    (expandedOnly ? '[visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]' : ""));
+  const baseline: TranscriptCue[] = [];
+  for (const panel of panels) {
+    const modern = Array.from(panel.querySelectorAll("transcript-segment-view-model")).map((row) => ({
+      timestamp: row.querySelector(".ytwTranscriptSegmentViewModelTimestamp")?.textContent ?? "",
+      text: row.querySelector("span.ytAttributedStringHost")?.textContent ?? ""
+    }));
+    const rows = modern.length ? modern : Array.from(panel.querySelectorAll("ytd-transcript-segment-renderer")).map((row) => ({
+      timestamp: row.querySelector(".segment-timestamp")?.textContent ?? "",
+      text: row.querySelector(".segment-text")?.textContent ?? ""
+    }));
+    const cues = transcriptCuesFromRows(rows);
+    if (expandedOnly && cues.length) return cues;
+    baseline.push(...cues);
   }
-  if (cues.length === 0) {
-    try {
-      cues = await fetchNativeTranscript(videoId);
-    } catch (nativeError) {
-      const nativeMessage = nativeError instanceof Error ? nativeError.message : "读取页面文字稿失败";
-      throw new Error(`${apiError?.message ?? "读取 YouTube 文字稿失败"}；页面回退失败：${nativeMessage}`);
+  return baseline;
+}
+
+let nativeTranscript: { videoId: string; cues: TranscriptCue[] } | undefined;
+const pendingNativeTranscripts = new Map<string, Promise<TranscriptCue[]>>();
+const pause = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+const cueKey = ({ startMs, text }: TranscriptCue) => `${startMs}\0${text}`;
+
+async function fetchNativeTranscript(videoId: string): Promise<TranscriptCue[]> {
+  const watch = currentNativeWatch(videoId);
+  if (!watch) return [];
+  if (nativeTranscript?.videoId === videoId) return nativeTranscript.cues;
+
+  let button = watch.querySelector<HTMLButtonElement>(TRANSCRIPT_BUTTON);
+  if (!button) {
+    watch.querySelector<HTMLElement>("ytd-watch-metadata #description #expand")?.click();
+    const deadline = Date.now() + 1500;
+    while (!button && Date.now() < deadline) {
+      await pause(100);
+      if (currentNativeWatch(videoId) !== watch) return [];
+      button = watch.querySelector<HTMLButtonElement>(TRANSCRIPT_BUTTON);
     }
   }
-  if (new URL(location.href).searchParams.get("v") !== videoId) throw new Error("视频已经切换");
-  return cues;
+  if (!button) return [];
+
+  // A SPA navigation can leave the previous video's expanded transcript in
+  // the current watch element. A click alone does not make those rows current.
+  const before = new Set(readNativeTranscript(watch, false).map(cueKey));
+  button.click();
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline && currentNativeWatch(videoId) === watch) {
+    const cues = readNativeTranscript(watch);
+    if (cues.some((cue) => !before.has(cueKey(cue)))) {
+      nativeTranscript = { videoId, cues };
+      return cues;
+    }
+    await pause(120);
+  }
+  return [];
+}
+
+async function fetchTranscript(videoId: string): Promise<TranscriptCue[]> {
+  try {
+    return await fetchTranscriptFromApi(videoId);
+  } catch (error) {
+    let pending = pendingNativeTranscripts.get(videoId);
+    if (!pending) {
+      pending = fetchNativeTranscript(videoId).finally(() => pendingNativeTranscripts.delete(videoId));
+      pendingNativeTranscripts.set(videoId, pending);
+    }
+    const cues = await pending;
+    if (cues.length) return cues;
+    throw error;
+  }
 }
 
 document.addEventListener("tubitle:request-transcript", (event) => {

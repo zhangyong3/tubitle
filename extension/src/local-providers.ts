@@ -32,7 +32,12 @@ async function responseJson(response: Response, label: string): Promise<unknown>
   return response.json();
 }
 
-async function microsoft(text: string, settings: ExtensionSettings, source = ""): Promise<string> {
+function translationSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(15_000);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+async function microsoft(text: string, settings: ExtensionSettings, source = "", signal?: AbortSignal): Promise<string> {
   const key = required(settings.microsoftTranslatorKey, "请先配置 Microsoft Translator Key");
   const endpoint = required(settings.microsoftTranslatorEndpoint, "请先配置 Microsoft Translator Endpoint").replace(/\/+$/, "");
   const url = new URL(`${endpoint}/translate`);
@@ -49,7 +54,7 @@ async function microsoft(text: string, settings: ExtensionSettings, source = "")
         ? { "Ocp-Apim-Subscription-Region": settings.microsoftTranslatorRegion.trim() } : {})
     },
     body: JSON.stringify([{ text }]),
-    signal: AbortSignal.timeout(15_000)
+    signal: translationSignal(signal)
   });
   if (response.status === 429) {
     void response.body?.cancel().catch(() => undefined);
@@ -61,7 +66,7 @@ async function microsoft(text: string, settings: ExtensionSettings, source = "")
   return decodeTextEntities(result);
 }
 
-async function google(text: string, settings: ExtensionSettings, source = ""): Promise<string> {
+async function google(text: string, settings: ExtensionSettings, source = "", signal?: AbortSignal): Promise<string> {
   const key = required(settings.googleTranslateApiKey, "请先配置 Google Translation API Key");
   const url = new URL("https://translation.googleapis.com/language/translate/v2");
   url.searchParams.set("key", key);
@@ -69,7 +74,7 @@ async function google(text: string, settings: ExtensionSettings, source = ""): P
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ q: [text], ...(source ? { source: providerLanguage(source, "google") } : {}), target: providerLanguage(settings.targetLanguage, "google"), format: "text" }),
-    signal: AbortSignal.timeout(15_000)
+    signal: translationSignal(signal)
   });
   const payload = await responseJson(response, "Google 翻译") as { data?: { translations?: Array<{ translatedText?: string }> } };
   const result = payload.data?.translations?.[0]?.translatedText;
@@ -89,7 +94,7 @@ async function hmac(key: ArrayBuffer | Uint8Array | string, value: string): Prom
   return crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(value));
 }
 
-async function tencent(text: string, settings: ExtensionSettings, source = ""): Promise<string> {
+async function tencent(text: string, settings: ExtensionSettings, source = "", signal?: AbortSignal): Promise<string> {
   const secretId = required(settings.tencentSecretId, "请先配置腾讯云 Secret ID");
   const secretKey = required(settings.tencentSecretKey, "请先配置腾讯云 Secret Key");
   const body = JSON.stringify({ SourceText: text, Source: source ? providerLanguage(source, "tencent") : "auto", Target: providerLanguage(settings.targetLanguage, "tencent"), ProjectId: 0 });
@@ -106,6 +111,7 @@ async function tencent(text: string, settings: ExtensionSettings, source = ""): 
   const signingKey = await hmac(serviceKey, "tc3_request");
   const signatureBytes = await hmac(signingKey, stringToSign);
   const signature = [...new Uint8Array(signatureBytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  signal?.throwIfAborted();
   const response = await fetch(`https://${tencentHost}`, {
     method: "POST",
     headers: {
@@ -117,7 +123,7 @@ async function tencent(text: string, settings: ExtensionSettings, source = ""): 
       "X-TC-Region": settings.tencentRegion.trim() || "ap-guangzhou"
     },
     body,
-    signal: AbortSignal.timeout(15_000)
+    signal: translationSignal(signal)
   });
   const payload = await responseJson(response, "腾讯翻译") as {
     Response?: { TargetText?: string; Error?: { Code?: string; Message?: string } };
@@ -133,10 +139,10 @@ async function tencent(text: string, settings: ExtensionSettings, source = ""): 
   return decodeTextEntities(payload.Response.TargetText);
 }
 
-export function translateLocally(provider: TranslationProvider, text: string, settings: ExtensionSettings, source = ""): Promise<string> {
-  if (provider === "microsoft") return microsoft(text, settings, source);
-  if (provider === "google") return google(text, settings, source);
-  return tencent(text, settings, source);
+export function translateLocally(provider: TranslationProvider, text: string, settings: ExtensionSettings, source = "", signal?: AbortSignal): Promise<string> {
+  if (provider === "microsoft") return microsoft(text, settings, source, signal);
+  if (provider === "google") return google(text, settings, source, signal);
+  return tencent(text, settings, source, signal);
 }
 
 const ANALYSIS_PROMPT = `你是一位严谨、简洁的英语教师。请用中文分析用户给出的英文句子。
