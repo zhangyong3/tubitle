@@ -605,6 +605,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes.settings) return;
   void getSettings().then((next) => {
     const languagesChanged = settings.targetLanguage !== next.targetLanguage || JSON.stringify(settings.excludedLanguages) !== JSON.stringify(next.excludedLanguages);
+    const localModeChanged = (settings.provider === "hy-mt-local") !== (next.provider === "hy-mt-local");
     const connectionChanged =
       settings.provider !== next.provider ||
       settings.microsoftTranslatorKey !== next.microsoftTranslatorKey ||
@@ -624,7 +625,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
     settings = next;
     syncCaptionVideo();
-    if (languagesChanged) { void loadTracks(latestTracks); return; }
+    if (languagesChanged || localModeChanged) { void loadTracks(latestTracks); return; }
     applySettings();
     publishTranscriptSnapshot();
     if (connectionChanged && activeIndex >= 0) scheduleTranslationPrefetch(activeIndex);

@@ -42,6 +42,7 @@ function App() {
           <option value="microsoft">Microsoft</option>
           <option value="google">Google Cloud</option>
           <option value="tencent">腾讯云</option>
+          <option value="hy-mt-local">使用 Tubitle 自研翻译服务</option>
         </select>
       </div>
       <button className="primary" onClick={() => void chrome.runtime.openOptionsPage()}>完整设置</button>

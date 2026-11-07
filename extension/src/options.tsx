@@ -39,7 +39,10 @@ function App() {
   }, []);
 
   async function requestApiPermissions(settings: ExtensionSettings): Promise<boolean> {
-    const origins = [settings.microsoftTranslatorEndpoint, settings.llmBaseUrl].filter(Boolean).map((value) => {
+    const origins = [
+      settings.microsoftTranslatorKey.trim() && settings.microsoftTranslatorEndpoint,
+      settings.llmApiKey.trim() && settings.llmBaseUrl
+    ].filter(Boolean).map((value) => {
       const url = new URL(value);
       return `${url.protocol}//${url.host}/*`;
     });
@@ -64,7 +67,7 @@ function App() {
   async function testProvider(provider: TranslationProvider | "llm") {
     setProviderMessage("正在测试连接…");
     try {
-      if (!await requestApiPermissions(form)) throw new Error("需要先允许访问所配置的 API 域名");
+      if (provider !== "hy-mt-local" && !await requestApiPermissions(form)) throw new Error("需要先允许访问所配置的 API 域名");
       await updateSettings(form);
       await sendMessage({ type: "TEST_PROVIDER", provider });
       setProviderMessage("连接成功 ✓");
@@ -143,9 +146,13 @@ function App() {
                 <option value="microsoft">Microsoft Translator</option>
                 <option value="google">Google Cloud Translation</option>
                 <option value="tencent">腾讯云机器翻译</option>
+                <option value="hy-mt-local">使用 Tubitle 自研翻译服务</option>
               </select>
             </div>
           </div>
+          <h3>Tubitle 自研翻译服务</h3>
+          <p className="hint">连接本机服务（127.0.0.1:18081），无需 API 密钥。模型由启动脚本选择；OPUS-MT 仅支持英文译为简体中文。</p>
+          <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("hy-mt-local")}>测试 Tubitle 翻译服务</button></div>
           <h3>腾讯云机器翻译</h3>
           <div className="grid">
             <div className="field"><label htmlFor="tencent-id">Secret ID</label><input id="tencent-id" type="password" value={form.tencentSecretId} onChange={(event) => setForm({ ...form, tencentSecretId: event.target.value })} autoComplete="off" /></div>

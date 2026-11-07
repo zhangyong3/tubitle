@@ -1,4 +1,4 @@
-export type TranslationProvider = "microsoft" | "google" | "tencent";
+export type TranslationProvider = "microsoft" | "google" | "tencent" | "hy-mt-local";
 
 export interface ShortcutSettings {
   previous: string;

@@ -1,0 +1,18 @@
+[
+  {"id":"idiom","kind":"subtitle","target":"zh","text":"I thought the update would be a piece of cake, but it took all afternoon."},
+  {"id":"phrasal-verb","kind":"subtitle","target":"zh","text":"We had to put off the launch until the team figured out what went wrong."},
+  {"id":"sarcasm","kind":"subtitle","target":"zh","text":"Oh, great. Another meeting that could have been an email."},
+  {"id":"numbers","kind":"subtitle","target":"zh","text":"The battery dropped from 82% to 39% in just 45 minutes."},
+  {"id":"science","kind":"subtitle","target":"zh","text":"The telescope isn't seeing the planet itself; it's measuring a tiny dip in starlight."},
+  {"id":"humor","kind":"subtitle","target":"zh","text":"My coffee kicked in right after I decided to take a nap."},
+  {"id":"product","kind":"subtitle","target":"zh","text":"On the M1 Pro, turn on Metal before running llama.cpp."},
+  {"id":"finance","kind":"subtitle","target":"zh","text":"The price rose by 3 percentage points, not by 3 percent."},
+  {"id":"paragraph-a","kind":"paragraph","target":"zh","text":"At first, the results looked promising. The new filter cut background noise by nearly half. But it also made quiet voices harder to hear, especially when two people were talking over each other. We kept the filter for noisy rooms and added a toggle so listeners could turn it off."},
+  {"id":"paragraph-b","kind":"paragraph","target":"zh","text":"On Tuesday, Maya said the team would ship the update by Friday, unless the final security review found a problem. The review cleared the payment changes but flagged a separate login issue. Instead of delaying everything, the team shipped the payment changes first and postponed the login fix until Monday."},
+  {"id":"paragraph-c","kind":"paragraph","target":"zh","text":"A small cache is fast to read, but it only saves money if people ask for the same thing. A popular video might get thousands of views, while most videos are watched by only a few people. That's why we measure how many characters the cache avoids sending upstream, rather than simply counting how many requests hit the cache."},
+  {"id":"paragraph-d","kind":"paragraph","target":"zh","text":"We compared the two machines after they had both warmed up. At low traffic the cheaper one was almost as fast, but once four users sent long requests at the same time, its queue grew quickly. The chart shows the 95th percentile, so it captures delays that would be easy to miss if we only looked at the average."},
+  {"id":"en-ja","kind":"language","target":"ja","text":"If you missed the first train, the next one leaves at 7:45."},
+  {"id":"en-es","kind":"language","target":"es","text":"Could you turn the volume down a little? I'm trying to hear the announcement."},
+  {"id":"zh-en","kind":"language","target":"en","text":"她嘴上说不着急，转身就给我发了三条催进度的消息。"},
+  {"id":"en-ar","kind":"language","target":"ar","text":"Don't unplug the router until the blue light stops blinking."}
+]

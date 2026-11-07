@@ -3,7 +3,7 @@ import { getSettings, updateSettings } from "./shared/settings";
 import type { ExtensionMessage, MessageResponse, TranslationProvider } from "./shared/types";
 import { ANALYSIS_QUERY_KEY } from "./shared/analysis-stream";
 import { cacheTranslation, getCachedTranslation } from "./background-cache";
-import { MicrosoftRateLimitError, requestAnalysis, translateLocally } from "./local-providers";
+import { getTubitleModel, MicrosoftRateLimitError, requestAnalysis, translateLocally } from "./local-providers";
 import { SmoothRateLimit } from "./shared/smooth-rate-limit";
 import { SUBTITLE_TRANSLATION_PORT, type SubtitleTranslationRequest } from "./shared/subtitle-translation";
 
@@ -11,7 +11,7 @@ interface TranslationJob {
   key?: string; text: string; provider: TranslationProvider;
   priority: "current" | "prefetch";
   settings: Awaited<ReturnType<typeof getSettings>>; source: string;
-  signal?: AbortSignal;
+  signal?: AbortSignal; expectedModel?: string;
   resolve: (value: string) => void; reject: (error: unknown) => void;
 }
 
@@ -19,6 +19,7 @@ const memoryCache = new Map<string, string>();
 const pending = new Map<string, Promise<string>>();
 const queue: TranslationJob[] = [];
 let activeTranslations = 0;
+let localActiveTranslations = 0;
 let microsoftActive = false;
 let microsoftNextRequestAt = 0;
 let microsoftBlockedUntil = 0;
@@ -27,13 +28,14 @@ const MICROSOFT_MIN_INTERVAL_MS = 250;
 const MICROSOFT_CHARACTERS_PER_SECOND = 400;
 const MICROSOFT_RETRY_BUDGET_MS = 10_000;
 const TENCENT_REQUEST_INTERVAL_MS = 240;
+const LOCAL_TRANSLATION_SLOTS = 4;
 const tencentRateLimit = new SmoothRateLimit(TENCENT_REQUEST_INTERVAL_MS);
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "发生未知错误";
 }
 
-function translationKey(provider: TranslationProvider, text: string, source: string, target: string): string {
+function translationKey(provider: string, text: string, source: string, target: string): string {
   return `${provider}\0${source || "auto"}\0${target}\0${text}`;
 }
 
@@ -100,7 +102,7 @@ async function runTranslation(job: TranslationJob): Promise<string> {
     if (job.provider === "tencent") await waitForTencentSlot(job.signal);
     job.signal?.throwIfAborted();
     try {
-      return await translateLocally(job.provider, job.text, job.settings, job.source, job.signal);
+      return await translateLocally(job.provider, job.text, job.settings, job.source, job.signal, job.expectedModel);
     } catch (error) {
       job.signal?.throwIfAborted();
       if (!isTencentRateLimit(error) || attempt === attempts - 1) throw error;
@@ -115,7 +117,9 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
   signal?.throwIfAborted();
   const source = sourceLanguage(text, trackLanguage);
   if (shouldSkipTranslation(source, settings)) return "";
-  const key = translationKey(provider, text, source, settings.targetLanguage);
+  const expectedModel = provider === "hy-mt-local" ? await getTubitleModel() : undefined;
+  signal?.throwIfAborted();
+  const key = translationKey(expectedModel ? `${provider}:${expectedModel}` : provider, text, source, settings.targetLanguage);
   const memory = memoryCache.get(key);
   if (memory) return memory;
   const existing = signal ? undefined : pending.get(key);
@@ -125,10 +129,10 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
   if (disk) { memoryCache.set(key, disk); return disk; }
   // Cancelable requests belong to one caption session. Do not tie another tab's
   // result to this tab's abort signal. Completed translations still share the cache.
-  if (signal) return scheduleTranslation({ key, text, provider, priority, settings, source, signal });
+  if (signal) return scheduleTranslation({ key, text, provider, priority, settings, source, signal, expectedModel });
   const pendingAfterCacheLookup = pending.get(key);
   if (pendingAfterCacheLookup) return pendingAfterCacheLookup;
-  const promise = scheduleTranslation({ key, text, provider, priority, settings, source }).finally(() => pending.delete(key));
+  const promise = scheduleTranslation({ key, text, provider, priority, settings, source, expectedModel }).finally(() => pending.delete(key));
   pending.set(key, promise);
   return promise;
 }
@@ -154,11 +158,21 @@ async function drainTranslationQueue(): Promise<void> {
   const settings = await getSettings();
   const limit = Math.min(8, Math.max(1, settings.provider === "tencent" ? settings.tencentConcurrency : 6));
   for (;;) {
-    const index = queue.findIndex((job) => job.provider === "microsoft" ? !microsoftActive : activeTranslations < limit);
+    const index = queue.findIndex((job) => {
+      if (job.provider === "microsoft") return !microsoftActive;
+      if (job.provider === "hy-mt-local") {
+        // Reserve one model slot for a subtitle that is already on screen.
+        return localActiveTranslations < LOCAL_TRANSLATION_SLOTS - (job.priority === "prefetch" ? 1 : 0);
+      }
+      return activeTranslations < limit;
+    });
     if (index < 0) return;
     const [job] = queue.splice(index, 1) as [TranslationJob];
     const microsoft = job.provider === "microsoft";
-    if (microsoft) microsoftActive = true; else activeTranslations += 1;
+    const local = job.provider === "hy-mt-local";
+    if (microsoft) microsoftActive = true;
+    else if (local) localActiveTranslations += 1;
+    else activeTranslations += 1;
     void runTranslation(job).then((translation) => {
       job.signal?.throwIfAborted();
       if (job.key !== undefined) {
@@ -167,7 +181,9 @@ async function drainTranslationQueue(): Promise<void> {
       }
       job.resolve(translation);
     }).catch(job.reject).finally(() => {
-      if (microsoft) microsoftActive = false; else activeTranslations -= 1;
+      if (microsoft) microsoftActive = false;
+      else if (local) localActiveTranslations -= 1;
+      else activeTranslations -= 1;
       void drainTranslationQueue();
     });
   }
@@ -185,8 +201,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
           if (message.provider === "llm") {
             const response = await requestAnalysis("This is a connection test.", settings);
             await response.body?.cancel();
-          } else if (message.provider === "microsoft") {
-            await scheduleTranslation({ provider: "microsoft", text: "This is a connection test.", priority: "current", settings, source: "" });
+          } else if (message.provider === "microsoft" || message.provider === "hy-mt-local") {
+            await scheduleTranslation({ provider: message.provider, text: "This is a connection test.", priority: "current", settings, source: "" });
           } else {
             if (message.provider === "tencent") await waitForTencentSlot();
             await translateLocally(message.provider, "This is a connection test.", settings);

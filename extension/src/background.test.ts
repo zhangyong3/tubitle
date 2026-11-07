@@ -13,7 +13,7 @@ const throttled = (seconds: string) => Response.json({
   error: { code: 429001, message: "The server rejected the request because the client has exceeded request limits." }
 }, { status: 429, headers: { "Retry-After": seconds } });
 
-describe("Microsoft Translator from the extension background", () => {
+describe("subtitle translation from the extension background", () => {
   let send: (message: ExtensionMessage) => Promise<MessageResponse>;
   const request = vi.fn<typeof fetch>();
 
@@ -136,5 +136,45 @@ describe("Microsoft Translator from the extension background", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(await subtitle("Another tab can still translate.")).toEqual({ ok: true, data: "译文" });
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("reserves a local model slot for the subtitle on screen while prefetching", async () => {
+    const finish: Array<() => void> = [];
+    request.mockImplementation(async (url) => String(url).endsWith("/health")
+      ? Response.json({ ready: true, model: "hy-mt2-1.8b-q4" })
+      : new Promise((resolve) => {
+        finish.push(() => resolve(Response.json({ translation: "本机译文", finishReason: "stop" })));
+      }));
+    const translations = () => request.mock.calls.filter(([url]) => String(url).endsWith("/v1/translate"));
+    const local = (text: string, priority: "current" | "prefetch" = "prefetch") => send({
+      type: "TRANSLATE", provider: "hy-mt-local", text, sourceLanguage: "en", priority
+    });
+    const pending = [local("First."), local("Second."), local("Third."), local("Fourth.")];
+    await vi.advanceTimersByTimeAsync(0);
+    expect(translations()).toHaveLength(3);
+    const current = local("On screen now.", "current");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(translations()).toHaveLength(4);
+    expect(translations()[3]?.[0]).toBe("http://127.0.0.1:18081/v1/translate");
+    expect(JSON.parse(String(translations()[3]?.[1]?.body))).toEqual({ text: "On screen now.", target: "zh", source: "en", expectedModel: "hy-mt2-1.8b-q4" });
+    finish.slice().forEach((resolve) => resolve());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(translations()).toHaveLength(5);
+    finish[4]!();
+    await expect(Promise.all([...pending, current])).resolves.toEqual(Array(5).fill({ ok: true, data: "本机译文" }));
+  });
+
+  it("keeps subtitle caches separate when the Tubitle model changes", async () => {
+    let model = "hy-mt2-1.8b-q4";
+    request.mockImplementation(async (url) => String(url).endsWith("/health")
+      ? Response.json({ ready: true, model })
+      : Response.json({ translation: model, finishReason: "stop" }));
+    const local = () => send({ type: "TRANSLATE", provider: "hy-mt-local", text: "Same subtitle.", sourceLanguage: "en" });
+    await expect(local()).resolves.toEqual({ ok: true, data: model });
+    model = "opus-mt-en-zh-int8";
+    await expect(local()).resolves.toEqual({ ok: true, data: model });
+    model = "hy-mt2-1.8b-q4";
+    await expect(local()).resolves.toEqual({ ok: true, data: model });
+    expect(request.mock.calls.filter(([url]) => String(url).endsWith("/v1/translate"))).toHaveLength(2);
   });
 });

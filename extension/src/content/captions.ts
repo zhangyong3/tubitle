@@ -262,7 +262,7 @@ export async function fetchBilingualCaptions(tracks: CaptionTrack[], settings: E
   if (!sentences.length) throw new Error("字幕轨道为空");
   const officialTranslations = new Map<string, string>();
   const result = { sentences, officialTranslations, sourceLanguage: source.languageCode };
-  if (shouldSkipTranslation(source.languageCode, settings)) return result;
+  if (settings.provider === "hy-mt-local" || shouldSkipTranslation(source.languageCode, settings)) return result;
   const targets = tracks.filter((track) => languageFamily(track.languageCode) === languageFamily(settings.targetLanguage));
   const traditional = /(?:tw|hant|hk)/i.test(settings.targetLanguage);
   const matching = targets.filter((track) => languageFamily(settings.targetLanguage) !== "zh" || /(?:tw|hant|hk)/i.test(track.languageCode) === traditional);

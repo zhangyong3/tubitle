@@ -1,12 +1,12 @@
 # Tubitle
 
-Tubitle 是一个完全在浏览器扩展中运行的 YouTube 英语学习工具，不需要账号、自建服务端或 Vercel。
+Tubitle 是一个在浏览器扩展中运行的 YouTube 英语学习工具，不需要账号或 Vercel；翻译可选择云服务或本机运行的混元模型。
 
 ## 功能
 
 - 英文、中文双行字幕，自动优先选择英文人工字幕
 - 使用 YouTube 播放器的字幕按钮控制双语字幕和学习面板；关闭字幕会停止字幕翻译。
-- Microsoft、Google Cloud、腾讯云机器翻译
+- Microsoft、Google Cloud、腾讯云机器翻译、Tubitle 自研翻译服务
 - 当前句优先、受控并发、逐句显示与本地持久缓存
 - 按标点和停顿整理字幕，支持上一句、下一句、重复当前句与自定义快捷键
 - 点词显示 Open English WordNet 英英释义，可手动打开朗文原站。配置 MDX/MDD 后，同一页还会显示离线释义与发音。
@@ -30,6 +30,8 @@ npm run build
 
 打开 `chrome://extensions`，启用开发者模式，选择“加载已解压的扩展程序”，加载 `extension/dist`。随后打开扩展设置，填写所需服务商密钥并点击测试连接。
 
+体验 Tubitle 自研翻译服务：按 [本地服务说明](translation-service/README.md) 准备模型，然后从项目根目录执行 `bash translation-service/service.sh start q4`。在扩展弹窗选择「使用 Tubitle 自研翻译服务」，打开有英文字幕的 YouTube 视频，开启播放器 CC 和扩展的「显示翻译」。字幕由本机模型生成，无需 API 密钥。可用 `restart 2bit` 或 `restart opus` 切换模型，用 `stop` 停止服务。
+
 生成可分发的 ZIP 安装包：
 
 ```bash
@@ -38,7 +40,7 @@ npm run package
 
 命令会先执行生产构建，再生成 `extension/tubitle-v<版本号>.zip`。ZIP 根目录直接包含 `manifest.json`，可用于发布或上传 Chrome 扩展商店。
 
-固定申请的服务域名包括腾讯云、Microsoft 和 Google 翻译。自定义 Microsoft Endpoint 与大模型 Base URL 会在保存时由浏览器请求对应的可选主机权限。
+固定申请的服务地址包括腾讯云、Microsoft、Google 翻译和 Tubitle 自研翻译服务的 `http://127.0.0.1:18081`。自定义 Microsoft Endpoint 与大模型 Base URL 会在保存时由浏览器请求对应的可选主机权限。
 
 ## 项目结构
 

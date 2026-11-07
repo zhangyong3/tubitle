@@ -25,5 +25,7 @@ describe("translation language policy", () => {
     expect(providerLanguage("zh", "microsoft")).toBe("zh-Hans");
     expect(providerLanguage("zh-TW", "google")).toBe("zh-TW");
     expect(providerLanguage("zh-Hant", "tencent")).toBe("zh-TW");
+    expect(providerLanguage("zh-TW", "hy-mt-local")).toBe("zh-Hant");
+    expect(providerLanguage("zh-CN", "hy-mt-local")).toBe("zh");
   });
 });

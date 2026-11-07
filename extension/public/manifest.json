@@ -11,6 +11,7 @@
     "https://tmt.tencentcloudapi.com/*",
     "https://api.cognitive.microsofttranslator.com/*",
     "https://translation.googleapis.com/*",
+    "http://127.0.0.1:18081/*",
     "https://en-word.net/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],

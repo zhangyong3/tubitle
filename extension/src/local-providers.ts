@@ -3,6 +3,7 @@ import { providerLanguage } from "./shared/languages";
 import type { ExtensionSettings, TranslationProvider } from "./shared/types";
 
 const tencentHost = "tmt.tencentcloudapi.com";
+export const LOCAL_TRANSLATION_ORIGIN = "http://127.0.0.1:18081";
 
 export class MicrosoftRateLimitError extends Error {
   constructor(readonly retryAfterMs: number) {
@@ -82,6 +83,56 @@ async function google(text: string, settings: ExtensionSettings, source = "", si
   return decodeTextEntities(result);
 }
 
+let pendingTubitleHealth: Promise<string> | undefined;
+
+export function getTubitleModel(): Promise<string> {
+  if (!pendingTubitleHealth) {
+    pendingTubitleHealth = (async () => {
+      let response: Response;
+      try {
+        response = await fetch(`${LOCAL_TRANSLATION_ORIGIN}/health`, {
+          cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(3000)
+        });
+      } catch {
+        throw new Error(`无法连接 Tubitle 翻译服务，请确认服务已启动（${LOCAL_TRANSLATION_ORIGIN}）`);
+      }
+      if (!response.ok) throw new Error("Tubitle 翻译服务尚未就绪，请确认模型已加载");
+      const payload = await response.json() as { ready?: boolean; model?: string };
+      if (!payload.ready || typeof payload.model !== "string" || !payload.model) throw new Error("Tubitle 翻译服务未返回模型信息");
+      return payload.model;
+    })().finally(() => { pendingTubitleHealth = undefined; });
+  }
+  return pendingTubitleHealth;
+}
+
+async function tubitle(text: string, settings: ExtensionSettings, source: string, signal?: AbortSignal, expectedModel?: string): Promise<string> {
+  const requestSignal = translationSignal(signal);
+  let response: Response;
+  try {
+    response = await fetch(`${LOCAL_TRANSLATION_ORIGIN}/v1/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, target: providerLanguage(settings.targetLanguage, "hy-mt-local"),
+        ...(source ? { source } : {}), ...(expectedModel ? { expectedModel } : {}) }),
+      redirect: "error",
+      signal: requestSignal
+    });
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (requestSignal.aborted) throw new Error("Tubitle 翻译超时，请稍后重试");
+    if (!(error instanceof TypeError)) throw error;
+    throw new Error(`无法连接 Tubitle 翻译服务，请确认服务已启动（${LOCAL_TRANSLATION_ORIGIN}）`);
+  }
+  if (response.status === 503) {
+    void response.body?.cancel().catch(() => undefined);
+    throw new Error("Tubitle 翻译服务尚未就绪，请确认模型已加载");
+  }
+  const payload = await responseJson(response, "Tubitle 翻译") as { translation?: unknown; finishReason?: string };
+  if (payload.finishReason === "length") throw new Error("Tubitle 译文被截断");
+  if (typeof payload.translation !== "string" || !payload.translation.trim()) throw new Error("Tubitle 翻译服务未返回译文");
+  return payload.translation.trim();
+}
+
 async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -139,9 +190,10 @@ async function tencent(text: string, settings: ExtensionSettings, source = "", s
   return decodeTextEntities(payload.Response.TargetText);
 }
 
-export function translateLocally(provider: TranslationProvider, text: string, settings: ExtensionSettings, source = "", signal?: AbortSignal): Promise<string> {
+export function translateLocally(provider: TranslationProvider, text: string, settings: ExtensionSettings, source = "", signal?: AbortSignal, expectedModel?: string): Promise<string> {
   if (provider === "microsoft") return microsoft(text, settings, source, signal);
   if (provider === "google") return google(text, settings, source, signal);
+  if (provider === "hy-mt-local") return tubitle(text, settings, source, signal, expectedModel);
   return tencent(text, settings, source, signal);
 }
 

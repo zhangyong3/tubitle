@@ -32,5 +32,6 @@ export function providerLanguage(language: string, provider: TranslationProvider
   const traditional = /(?:tw|hant|hk)/i.test(language);
   if (provider === "microsoft") return traditional ? "zh-Hant" : "zh-Hans";
   if (provider === "google") return traditional ? "zh-TW" : "zh-CN";
+  if (provider === "hy-mt-local") return traditional ? "zh-Hant" : "zh";
   return traditional ? "zh-TW" : "zh";
 }
