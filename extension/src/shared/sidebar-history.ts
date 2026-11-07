@@ -1,6 +1,6 @@
 import type { AnalysisQuery } from "./analysis-stream";
 import { normalizeDictionaryWord } from "./dictionary-lookup";
-import type { WordNetSense } from "./wordnet";
+import type { WordNetLookup, WordNetSense } from "./wordnet";
 
 export const SIDEBAR_HISTORY_KEY = "sidebarHistory";
 export const DEFAULT_HISTORY_LIMIT = 20;
@@ -16,6 +16,7 @@ export interface DictionaryHistoryEntry extends HistoryBase {
   // Older installations saved MDX excerpts here. They are never exported.
   definitionNote?: string;
   wordNet?: WordNetSense[];
+  wordNetLemma?: string;
 }
 
 export interface AnalysisHistoryEntry extends HistoryBase {
@@ -80,11 +81,14 @@ export function recordDictionaryHistory(word: string, limit: number): Promise<Si
     word: normalized,
     createdAt: Date.now()
   };
-  return writeHistory((current) => [
-    { ...entry, wordNet: current.find((item): item is DictionaryHistoryEntry =>
-      item.type === "dictionary" && normalizeDictionaryWord(item.word) === normalized)?.wordNet },
-    ...current.filter((item) => item.type !== "dictionary" || normalizeDictionaryWord(item.word) !== normalized)
-  ], limit);
+  return writeHistory((current) => {
+    const previous = current.find((item): item is DictionaryHistoryEntry =>
+      item.type === "dictionary" && normalizeDictionaryWord(item.word) === normalized);
+    return [
+      { ...entry, wordNet: previous?.wordNet, wordNetLemma: previous?.wordNetLemma },
+      ...current.filter((item) => item.type !== "dictionary" || normalizeDictionaryWord(item.word) !== normalized)
+    ];
+  }, limit);
 }
 
 export function recordAnalysisHistory(
@@ -109,10 +113,10 @@ export function recordAnalysisHistory(
   ], limit);
 }
 
-export function saveWordNetSenses(word: string, wordNet: WordNetSense[], limit: number): Promise<SidebarHistoryEntry[]> {
+export function saveWordNetLookup(word: string, lookup: WordNetLookup, limit: number): Promise<SidebarHistoryEntry[]> {
   return writeHistory((current) => current.map((entry) =>
     entry.type === "dictionary" && normalizeDictionaryWord(entry.word) === word
-      ? { ...entry, wordNet }
+      ? { ...entry, wordNet: lookup.senses, wordNetLemma: lookup.lemma === word ? undefined : lookup.lemma }
       : entry
   ), limit);
 }

@@ -31,7 +31,7 @@ import {
   recordAnalysisHistory,
   recordDictionaryHistory,
   recordTranslationHistory,
-  saveWordNetSenses,
+  saveWordNetLookup,
   SIDEBAR_HISTORY_KEY,
   trimSidebarHistory,
   type AnalysisHistoryEntry,
@@ -42,7 +42,7 @@ import { buildTranscriptNotes, formatCaptionTime } from "./shared/transcript-not
 
 import {
   lookupWordNet, PRINCETON_COPYRIGHT, PRINCETON_LICENSE, PRINCETON_NOTICE,
-  WORDNET_COPYRIGHT, WORDNET_LICENSE, WORDNET_NAME, WORDNET_SITE, type WordNetSense
+  WORDNET_COPYRIGHT, WORDNET_LICENSE, WORDNET_NAME, WORDNET_SITE, type WordNetLookup
 } from "./shared/wordnet";
 
 type SidebarTab = TranscriptPanelTab;
@@ -214,7 +214,7 @@ function App() {
   const [transcriptAutoFollow, setTranscriptAutoFollow] = useState(true);
   const [result, setResult] = useState<LookupResult>();
   const [lookup, setLookup] = useState<{ word: string }>();
-  const [wordNetSenses, setWordNetSenses] = useState<WordNetSense[]>();
+  const [wordNetResult, setWordNetResult] = useState<WordNetLookup>();
   const [wordNetError, setWordNetError] = useState(false);
   const [offlineConfigured, setOfflineConfigured] = useState(false);
   const [offlineRevision, setOfflineRevision] = useState(0);
@@ -347,7 +347,7 @@ function App() {
     setLookup({ word });
     setPlaybackError("");
     setResult(undefined);
-    setWordNetSenses(undefined);
+    setWordNetResult(undefined);
     setWordNetError(false);
     try {
       const entries = await (saveToHistory
@@ -357,12 +357,13 @@ function App() {
       const cached = entries.find((entry) =>
         entry.type === "dictionary" && normalizeDictionaryWord(entry.word) === word);
       if (cached?.type === "dictionary" && cached.wordNet?.length) {
-        setWordNetSenses(cached.wordNet);
+        setWordNetResult({ lemma: cached.wordNetLemma ?? word, senses: cached.wordNet });
         return;
       }
-      const senses = await lookupWordNet(word, controller.signal);
-      if (senses.length) await saveWordNetSenses(word, senses, historyLimitRef.current).catch(() => undefined);
-      if (!controller.signal.aborted) setWordNetSenses(senses);
+      const match = await lookupWordNet(word, controller.signal);
+      if (controller.signal.aborted) return;
+      if (match.senses.length) await saveWordNetLookup(word, match, historyLimitRef.current).catch(() => undefined);
+      if (!controller.signal.aborted) setWordNetResult(match);
     } catch {
       if (!controller.signal.aborted) setWordNetError(true);
     }
@@ -591,15 +592,20 @@ function App() {
               <h2 id="wordnet-heading">{WORDNET_NAME}</h2>
               <div aria-live="polite">
                 {wordNetError ? <div className="status error">暂时无法加载 WordNet 释义。</div>
-                  : !wordNetSenses ? <div className="status">正在查询 WordNet…</div>
-                  : !wordNetSenses.length ? <div className="status empty">WordNet 中没有找到这个词条。</div>
-                  : <ol className="wordnet-senses" lang="en">{wordNetSenses.map((sense, index) => (
-                    <li key={index}>
-                      {sense.partOfSpeech && <span className="wordnet-pos">{sense.partOfSpeech}</span>}
-                      {sense.definitions.map((definition, i) => <div key={i}>{definition}</div>)}
-                      {sense.examples.map((example, i) => <blockquote key={i}>“{example}”</blockquote>)}
-                    </li>
-                  ))}</ol>}
+                  : !wordNetResult ? <div className="status">正在查询 WordNet…</div>
+                  : !wordNetResult.senses.length ? <div className="status empty">WordNet 中没有找到这个词条。</div>
+                  : <>
+                    {wordNetResult.lemma !== lookup.word && (
+                      <p className="brand">按原形查到：<strong lang="en">{wordNetResult.lemma}</strong></p>
+                    )}
+                    <ol className="wordnet-senses" lang="en">{wordNetResult.senses.map((sense, index) => (
+                      <li key={index}>
+                        {sense.partOfSpeech && <span className="wordnet-pos">{sense.partOfSpeech}</span>}
+                        {sense.definitions.map((definition, i) => <div key={i}>{definition}</div>)}
+                        {sense.examples.map((example, i) => <blockquote key={i}>“{example}”</blockquote>)}
+                      </li>
+                    ))}</ol>
+                  </>}
               </div>
               <div className="dictionary-credit">
                 <a href={WORDNET_SITE} target="_blank" rel="noopener noreferrer">{WORDNET_NAME}</a> · {WORDNET_COPYRIGHT}

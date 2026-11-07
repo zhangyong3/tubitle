@@ -19,6 +19,52 @@ export interface WordNetSense {
   examples: string[];
 }
 
+export interface WordNetLookup {
+  lemma: string;
+  senses: WordNetSense[];
+}
+
+type InflectedPart = "noun" | "verb";
+type LemmaCandidate = { lemma: string; parts: readonly InflectedPart[] };
+const irregularNouns = new Map(Object.entries({
+  children: "child", feet: "foot", geese: "goose", men: "man", mice: "mouse", teeth: "tooth", women: "woman"
+}));
+const irregularVerbs = new Map(Object.entries({
+  ate: "eat", eaten: "eat", bought: "buy", did: "do", does: "do", done: "do", gone: "go", went: "go",
+  had: "have", has: "have", made: "make", ran: "run", said: "say", seen: "see", saw: "see",
+  took: "take", taken: "take", was: "be", were: "be", written: "write", wrote: "write"
+}));
+
+function inflectionCandidates(word: string): LemmaCandidate[] {
+  if (!/^[a-z]+$/.test(word)) return [];
+  const candidates = new Map<string, InflectedPart[]>();
+  function add(lemma: string | undefined, ...parts: InflectedPart[]) {
+    if (!lemma || lemma.length < 2 || lemma === word) return;
+    candidates.set(lemma, [...new Set([...(candidates.get(lemma) ?? []), ...parts])]);
+  }
+
+  add(irregularNouns.get(word), "noun");
+  add(irregularVerbs.get(word), "verb");
+  if (word.endsWith("ed") || word.endsWith("ing")) {
+    const isPast = word.endsWith("ed");
+    const stem = word.slice(0, isPast ? -2 : -3);
+    if (word.endsWith("ied")) add(word.slice(0, -3) + "y", "verb");
+    if (/^[dlt]ying$/.test(word)) add(word.slice(0, -4) + "ie", "verb");
+    if (/([bdgklmnprstz])\1$/.test(stem)) add(stem.slice(0, -1), "verb");
+    // An undoubled short stem may have lost a silent e: hoping → hope, not hop.
+    const prefersSilentE = isPast ? /[^aeiouy]$/.test(stem) : /^[^aeiou]+[aeiou][bdgklmnprstz]$/.test(stem);
+    if (prefersSilentE) add(stem + "e", "verb");
+    add(stem, "verb");
+    add(stem + "e", "verb");
+  } else if (word.endsWith("s") && !word.endsWith("ss")) {
+    if (word.endsWith("ies")) add(word.slice(0, -3) + "y", "noun", "verb");
+    if (word.endsWith("zzes")) add(word.slice(0, -3), "noun", "verb");
+    add(word.slice(0, -1), "noun", "verb");
+    if (/(?:[sxzo]|ch|sh)es$/.test(word)) add(word.slice(0, -2), "noun", "verb");
+  }
+  return [...candidates].map(([lemma, parts]) => ({ lemma, parts }));
+}
+
 const partsOfSpeech: Readonly<Record<string, string>> = {
   n: "noun", v: "verb", a: "adjective", s: "adjective", r: "adverb"
 };
@@ -43,15 +89,29 @@ function parseSynsets(payload: unknown): WordNetSense[] {
   });
 }
 
-export async function lookupWordNet(word: string, signal: AbortSignal): Promise<WordNetSense[]> {
-  const lemma = normalizeDictionaryWord(word);
-  if (!lemma) return [];
+async function fetchWordNetSenses(lemma: string, signal: AbortSignal): Promise<WordNetSense[]> {
+  signal.throwIfAborted();
   const response = await fetch(`${WORDNET_SITE}/api/lemma/${encodeURIComponent(lemma)}`, {
     headers: { Accept: "application/json" },
     credentials: "omit",
-    signal: AbortSignal.any([signal, AbortSignal.timeout(8000)])
+    signal
   });
   if (!response.ok) throw new Error(`WordNet HTTP ${response.status}`);
   return parseSynsets(await response.json());
+}
+
+export async function lookupWordNet(word: string, signal: AbortSignal): Promise<WordNetLookup> {
+  const lemma = normalizeDictionaryWord(word);
+  if (!lemma) return { lemma, senses: [] };
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(8000)]);
+  const exact = await fetchWordNetSenses(lemma, deadline);
+  if (exact.length) return { lemma, senses: exact };
+
+  for (const candidate of inflectionCandidates(lemma)) {
+    const senses = (await fetchWordNetSenses(candidate.lemma, deadline))
+      .filter(({ partOfSpeech }) => candidate.parts.some((part) => part === partOfSpeech));
+    if (senses.length) return { lemma: candidate.lemma, senses };
+  }
+  return { lemma, senses: [] };
 }
 
