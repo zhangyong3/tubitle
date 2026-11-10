@@ -26,6 +26,7 @@ let activeIndex = -1;
 let captionLanguage = "";
 let latestTracks: CaptionTrack[] = [];
 let captionVideoId: string | null = null;
+let finishedVideo: HTMLVideoElement | undefined;
 let loadVersion = 0;
 let pausedByHover = false;
 let lastLayoutUpdate = 0;
@@ -55,6 +56,10 @@ nativeCaptionStyle.textContent = ".ytp-caption-window-container{display:none!imp
 
 function videoElement(): HTMLVideoElement | null {
   return document.querySelector("video.html5-main-video, video");
+}
+
+function isReviewingFinishedVideo(video = videoElement()): boolean {
+  return Boolean(settings?.enabled && video?.ended && video === finishedVideo);
 }
 
 function watchVideoId(url = location.href): string | null {
@@ -184,6 +189,7 @@ function syncCaptionVideo(): string | null {
   const videoId = watchVideoId();
   if (videoId === captionVideoId) return videoId;
   captionVideoId = videoId;
+  finishedVideo = undefined;
   latestTracks = [];
   pausedByHover = false;
   stopCaptionSession();
@@ -357,7 +363,7 @@ function scheduleTranslationPrefetch(currentIndex: number): void {
 }
 
 function prefetchCaptionIndexes(indexes: number[]): void {
-  if (!captionSession) return;
+  if (!captionSession || isReviewingFinishedVideo()) return;
   const provider = settings.provider;
   if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
   for (const index of new Set(indexes)) {
@@ -465,9 +471,9 @@ function activateSentence(index: number): void {
 
 function seekTo(index: number, video = videoElement()): void {
   const sentence = sentences[index];
-  if (!captionSession || !sentence || !video) return;
+  if (!sentence || !video || (!captionSession && !isReviewingFinishedVideo(video))) return;
   video.currentTime = sentence.startMs / 1000 + 0.01;
-  activateSentence(index);
+  if (captionSession) activateSentence(index);
   void video.play().catch(() => undefined);
 }
 
@@ -506,8 +512,9 @@ function schedulePanelLayoutUpdate(): void {
   panelLayoutFrame = window.requestAnimationFrame(() => {
     panelLayoutFrame = undefined;
     const video = videoElement();
-    if (!captionSession || !video || document.fullscreenElement) return;
-    learningPanel.updateLayout(video.getBoundingClientRect());
+    if (!video || document.fullscreenElement) return;
+    const reviewing = isReviewingFinishedVideo(video);
+    if (captionSession || reviewing) learningPanel.updateLayout(video.getBoundingClientRect(), reviewing);
   });
 }
 
@@ -555,7 +562,7 @@ function syncYouTubeCaptionVisibility(): void {
   syncNativeCaptionStyle();
   overlay.setEnabled(visible);
   overlay.setCaptionsVisible(visible);
-  learningPanel.setVisible(visible && !document.fullscreenElement);
+  learningPanel.setVisible((visible || isReviewingFinishedVideo()) && !document.fullscreenElement);
   if (!visible && pausedByHover) {
     pausedByHover = false;
     if (settings.resumeAfterHover) void videoElement()?.play().catch(() => undefined);
@@ -564,12 +571,34 @@ function syncYouTubeCaptionVisibility(): void {
   if (visible && transcriptError && !sentences.length) void loadTracks(latestTracks);
 }
 
+function finishCaptionPlayback(event: Event): void {
+  const video = videoElement();
+  if (!settings?.enabled || !captionSession || !sentences.length || !video?.ended || event.target !== video ||
+      !captionVideoId || captionVideoId !== watchVideoId() ||
+      document.querySelector("#movie_player.ad-showing, #movie_player.ad-interrupting")) return;
+
+  // Keep this video on screen before YouTube handles the end event and advances.
+  event.stopImmediatePropagation();
+  learningPanel.setPlaybackActive(false);
+  finishedVideo = video;
+  pausedByHover = false;
+  video.pause();
+  activateSentence(-1);
+  lastLayoutUpdate = -Infinity;
+  learningPanel.setActive(-1, video.currentTime * 1000, Number.isFinite(video.duration) ? video.duration * 1000 : 0);
+  learningPanel.setVisible(!document.fullscreenElement);
+  learningPanel.openTab("subtitles");
+  if (document.fullscreenElement?.contains(video)) void document.exitFullscreen().catch(() => undefined);
+}
+
 function tick(timestamp: number): void {
   syncYouTubeCaptionVisibility();
   const video = videoElement();
-  const panelVisible = Boolean(captionSession && !document.fullscreenElement);
+  const reviewing = isReviewingFinishedVideo(video);
+  if (!video?.ended || video !== finishedVideo) finishedVideo = undefined;
+  const panelVisible = Boolean((captionSession || reviewing) && !document.fullscreenElement);
   learningPanel.setVisible(panelVisible);
-  if (captionSession) {
+  if (captionSession || reviewing) {
     if (video) {
       if (timestamp - lastLayoutUpdate >= 200) {
         const fullscreenParent = document.fullscreenElement;
@@ -577,14 +606,19 @@ function tick(timestamp: number): void {
         const bounds = video.getBoundingClientRect();
         overlay.updateVideoBounds(bounds);
         if (panelVisible) {
-          learningPanel.updateLayout(bounds);
+          learningPanel.updateLayout(bounds, reviewing);
           learningPanel.setActive(activeIndex, video.currentTime * 1000, Number.isFinite(video.duration) ? video.duration * 1000 : 0);
         }
         lastLayoutUpdate = timestamp;
       }
-      activateSentence(findSentenceIndex(sentences, video.currentTime * 1000));
+      if (captionSession && !reviewing) {
+        activateSentence(findSentenceIndex(sentences, video.currentTime * 1000));
+      }
     }
   }
+  learningPanel.setPlaybackActive(Boolean(panelVisible && video && !video.paused && !video.seeking && !video.ended &&
+    video.playbackRate > 0 && video.readyState >= video.HAVE_FUTURE_DATA &&
+    !video.closest(".ad-showing, .ad-interrupting")));
   requestAnimationFrame(tick);
 }
 
@@ -597,6 +631,12 @@ document.addEventListener("tubetitle:tracks", (event) => {
   if (detail?.tracks) void loadTracks(detail.tracks, detail.url);
 });
 document.addEventListener("yt-navigate-finish", syncCaptionVideo);
+document.addEventListener("ended", finishCaptionPlayback, true);
+for (const eventName of ["pause", "waiting", "seeking", "ended"]) {
+  document.addEventListener(eventName, (event) => {
+    if (event.target === videoElement()) learningPanel.setPlaybackActive(false);
+  }, true);
+}
 window.addEventListener("popstate", syncCaptionVideo);
 document.addEventListener("keydown", handleShortcut, true);
 document.addEventListener("scroll", schedulePanelLayoutUpdate, { capture: true, passive: true });

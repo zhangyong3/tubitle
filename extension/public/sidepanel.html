@@ -13,10 +13,11 @@
       .transcript-study:hover,.transcript-study:focus-visible{border-color:#64528c;background:#302650;color:#fff}
       .transcript-copy{overflow-wrap:anywhere}.history-translation{cursor:default}.transcript-feedback{margin:0 13px 8px;color:#a8d9c4;font-size:12px}.transcript-feedback.error{color:#ffb8b8}
       .dictionary-page{overflow-wrap:anywhere}
+      .dictionary-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+      .dictionary-heading .word{margin:0;min-width:0;overflow-wrap:anywhere}
       .dictionary-link,.dictionary-credit a{color:#c5b9ff;text-underline-offset:3px}
-      .dictionary-link{display:inline-block;font-size:13px;padding:4px 0}
+      .dictionary-link{flex:none;white-space:nowrap;font-size:13px;padding:4px 0}
       .dictionary-link:active{transform:translateY(1px)}
-      .dictionary-page .word{margin:7px 0 18px}
       .dictionary-source h2{margin:0 0 10px;color:#e9eaf0;font-size:14px;line-height:1.4}
       .dictionary-source+.dictionary-source{margin-top:18px;border-top:1px solid #292c38;padding-top:15px}
       .wordnet-senses{margin:0;padding:0 0 0 23px;color:#e9eaf0;font-size:14px;line-height:1.55}
@@ -26,9 +27,8 @@
       .wordnet-pos{display:block;font-size:12px;font-weight:650}
       .wordnet-senses blockquote{margin:3px 0 0;color:#aeb2c0}
       .dictionary-credit{margin-top:13px;color:#aeb2c0;font-size:11px;line-height:1.55}
-      .dictionary-credit details{margin-top:4px}
-      .dictionary-credit summary{cursor:pointer}
-      .dictionary-credit p{white-space:pre-line}
+      .dictionary-credit summary{width:fit-content;cursor:pointer}
+      .dictionary-credit p{margin:6px 0;white-space:pre-line}
       .dictionary-source .definition{border-radius:8px}
     </style>
   </head>

@@ -3,7 +3,10 @@ import { DEFAULT_SETTINGS } from "../shared/settings";
 
 const fixture = vi.hoisted(() => ({
   setPanelVisible: vi.fn(),
+  setPlaybackActive: vi.fn(),
   setSnapshot: vi.fn(),
+  setTranslation: vi.fn(),
+  openTab: vi.fn(),
   fetchCaptions: vi.fn(),
   setCaptionsVisible: vi.fn(),
   sendTranslation: vi.fn(),
@@ -32,9 +35,11 @@ vi.mock("./overlay", () => ({
 vi.mock("./learning-panel", () => ({
   PageLearningPanel: class {
     setVisible = fixture.setPanelVisible;
+    setPlaybackActive = fixture.setPlaybackActive;
     setSnapshot = fixture.setSnapshot;
+    openTab = fixture.openTab;
     setActive() {}
-    setTranslation() {}
+    setTranslation = fixture.setTranslation;
     updateLayout() {}
   }
 }));
@@ -53,7 +58,13 @@ async function openFixture() {
   vi.clearAllMocks();
   fixture.fetchCaptions.mockImplementation(async () => captions());
   let pressed = "false";
-  const video = { currentTime: 0.5, duration: 2, getBoundingClientRect: () => ({}) };
+  const video = {
+    currentTime: 0.5, duration: 2, paused: true, ended: false, seeking: false,
+    playbackRate: 1, readyState: 4, HAVE_FUTURE_DATA: 3,
+    pause: vi.fn(() => { video.paused = true; }),
+    closest: vi.fn(() => null),
+    getBoundingClientRect: () => ({})
+  };
   const button = { disabled: false, getAttribute: (name: string) => name === "aria-pressed" ? pressed : null };
   const document = Object.assign(new EventTarget(), {
     title: "Test video",
@@ -83,7 +94,15 @@ async function openFixture() {
   await vi.waitFor(() => expect(fixture.setSnapshot).toHaveBeenLastCalledWith(
     expect.objectContaining({ sentences: expect.arrayContaining([expect.objectContaining({ id: "one" })]) })
   ));
-  return { tick, location, document, video, button, publishTracks, setPressed: (value: string) => { pressed = value; } };
+  const endPlayback = () => {
+    video.currentTime = video.duration;
+    video.ended = true;
+    const event = new Event("ended");
+    // Simulate the document's capture listener seeing a media event from its video.
+    Object.defineProperty(event, "target", { value: video });
+    document.dispatchEvent(event);
+  };
+  return { tick, location, document, video, button, publishTracks, endPlayback, setPressed: (value: string) => { pressed = value; } };
 }
 
 it("follows the native CC button and gates subtitle translation until CC is on", async () => {
@@ -112,6 +131,85 @@ it("follows the native CC button and gates subtitle translation until CC is on",
   expect(fixture.sendTranslation).toHaveBeenCalledWith(expect.objectContaining({ text: fixture.sentences[1]!.text }), expect.any(AbortSignal));
 });
 
+it("only reports normal playback to the panel while captions are on", async () => {
+  const { tick, video, setPressed } = await openFixture();
+  video.paused = false;
+  tick();
+  expect(fixture.setPlaybackActive).toHaveBeenLastCalledWith(false);
+
+  setPressed("true");
+  tick();
+  expect(fixture.setPlaybackActive).toHaveBeenLastCalledWith(true);
+
+  video.readyState = 2;
+  tick();
+  expect(fixture.setPlaybackActive).toHaveBeenLastCalledWith(false);
+
+  video.readyState = 4;
+  video.seeking = true;
+  tick();
+  expect(fixture.setPlaybackActive).toHaveBeenLastCalledWith(false);
+
+  video.seeking = false;
+  video.pause();
+  tick();
+  expect(fixture.setPlaybackActive).toHaveBeenLastCalledWith(false);
+});
+
+it("publishes a prefetched translation while the video is still paused on the previous sentence", async () => {
+  const { tick, video, setPressed } = await openFixture();
+  fixture.sendTranslation.mockImplementation((request) => request.priority === "prefetch"
+    ? Promise.resolve("这是下一句。") : new Promise(() => {}));
+  setPressed("true");
+  tick();
+  await vi.waitFor(() => expect(fixture.setTranslation).toHaveBeenCalledWith("two", "这是下一句。"));
+  expect(video.paused).toBe(true);
+  expect(video.currentTime).toBeLessThan(fixture.sentences[1]!.startMs / 1000);
+});
+
+it("stays on the finished video and opens its exportable transcript at the end of playback", async () => {
+  const { tick, location, document, video, button, endPlayback, setPressed } = await openFixture();
+  setPressed("true");
+  video.paused = false;
+  tick();
+  document.addEventListener("ended", () => { location.search = "?v=next"; }, true);
+
+  endPlayback();
+  button.disabled = true;
+  tick();
+
+  expect(location.search).toBe("?v=test");
+  expect(video.paused).toBe(true);
+  expect(fixture.openTab).toHaveBeenCalledWith("subtitles");
+  expect(fixture.setPanelVisible).toHaveBeenLastCalledWith(true);
+  expect(fixture.setSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({
+    videoId: "test", loading: false, error: undefined,
+    sentences: fixture.sentences.map((sentence) => expect.objectContaining(sentence))
+  }));
+
+  location.search = "?v=manual";
+  document.dispatchEvent(new Event("yt-navigate-finish"));
+  tick();
+  expect(fixture.setPanelVisible).toHaveBeenLastCalledWith(false);
+  expect(fixture.setSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({ videoId: "manual", sentences: [] }));
+});
+
+it("leaves native playback alone when captions were turned off", async () => {
+  const { tick, document, endPlayback, setPressed } = await openFixture();
+  const nativeEnded = vi.fn();
+  document.addEventListener("ended", nativeEnded, true);
+  setPressed("true");
+  tick();
+  setPressed("false");
+  tick();
+
+  endPlayback();
+  tick();
+
+  expect(nativeEnded).toHaveBeenCalledOnce();
+  expect(fixture.openTab).not.toHaveBeenCalled();
+  expect(fixture.setPanelVisible).toHaveBeenLastCalledWith(false);
+});
 
 it("clears previous captions on SPA navigation before the new track list arrives", async () => {
   const { tick, location, document, button, publishTracks, setPressed } = await openFixture();

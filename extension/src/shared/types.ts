@@ -28,6 +28,7 @@ export interface ExtensionSettings {
   excludedLanguages: string[];
   hoverPause: boolean;
   resumeAfterHover: boolean;
+  autoReturnToSubtitlesSeconds: number;
   provider: TranslationProvider;
   microsoftTranslatorKey: string;
   microsoftTranslatorRegion: string;
@@ -103,6 +104,7 @@ export type TranscriptPanelTab = "subtitles" | "dictionary" | "analysis" | "hist
 export type TranscriptPanelHostMessage =
   | { source: "tubitle-host"; type: "TRANSCRIPT_STATE"; state: TranscriptPanelSnapshot }
   | { source: "tubitle-host"; type: "TRANSCRIPT_ACTIVE"; activeIndex: number; currentTimeMs: number; durationMs: number }
+  | { source: "tubitle-host"; type: "PANEL_PLAYBACK"; playing: boolean }
   | { source: "tubitle-host"; type: "TRANSCRIPT_TRANSLATION"; sentenceId: string; translation?: string; error?: string }
   | { source: "tubitle-host"; type: "STUDY_TRANSLATION"; videoId: string; sentence: CaptionSentence; translation?: string; error?: string }
   | { source: "tubitle-host"; type: "OPEN_PANEL_TAB"; tab: TranscriptPanelTab }

@@ -74,6 +74,8 @@ export function buildTranscriptNotes(snapshot: TranscriptPanelSnapshot, history:
     else exact.set(original, [index]);
   });
   const analysed = new Set<number>();
+  const analysisCoverage = new Set<number>();
+  const savedTranslations = new Map<number, string>();
   for (const entry of history) {
     if (entry.type === "dictionary" || (entry.videoId && entry.videoId !== snapshot.videoId)) continue;
     const original = normalizeSentence(entry.sentence);
@@ -97,16 +99,21 @@ export function buildTranscriptNotes(snapshot: TranscriptPanelSnapshot, history:
     if (!match) continue;
     const row = rows[match.start]!;
     if (entry.type === "translation") {
-      row.translation ??= entry.result;
+      if (!savedTranslations.has(match.start)) savedTranslations.set(match.start, entry.result);
     } else if (!analysed.has(match.start)) {
       analysed.add(match.start);
+      for (let index = match.start; index <= match.end; index++) analysisCoverage.add(index);
       const analysis = parseAnalysis(entry.result);
-      row.translation = analysis.translation || row.translation;
+      row.translation = analysis.translation;
       row.explanation = match.start === match.end ? analysis.explanation
         : [`解析对应第 ${match.start + 1} 至 ${match.end + 1} 段`, analysis.explanation].filter(Boolean).join("\n");
     }
   }
 
+  rows.forEach((row, index) => {
+    if (analysisCoverage.has(index)) return;
+    row.translation = snapshot.sentences[index]!.translation?.trim() || savedTranslations.get(index);
+  });
   return rows;
 }
 

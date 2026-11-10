@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { LANGUAGES } from "./shared/languages";
-import { DEFAULT_SETTINGS, getSettings, updateSettings } from "./shared/settings";
+import { DEFAULT_SETTINGS, getSettings, MAX_AUTO_RETURN_SECONDS, updateSettings } from "./shared/settings";
 import {
   removeOfflineDictionary,
   removeOfflineDictionaryCss,
@@ -200,6 +200,14 @@ function App() {
             <label><input type="checkbox" checked={form.showChinese} onChange={(event) => setForm({ ...form, showChinese: event.target.checked })} /> 默认显示翻译</label>
             <label><input type="checkbox" checked={form.hoverPause} onChange={(event) => setForm({ ...form, hoverPause: event.target.checked })} /> 悬停字幕时暂停</label>
             <label><input type="checkbox" checked={form.resumeAfterHover} onChange={(event) => setForm({ ...form, resumeAfterHover: event.target.checked })} /> 离开后恢复播放</label>
+            <div className="field">
+              <label htmlFor="auto-return-subtitles">自动返回字幕（秒）</label>
+              <input id="auto-return-subtitles" type="number" min="0" max={MAX_AUTO_RETURN_SECONDS} step="1" required
+                aria-describedby="auto-return-subtitles-hint"
+                value={Number.isNaN(form.autoReturnToSubtitlesSeconds) ? "" : form.autoReturnToSubtitlesSeconds}
+                onChange={(event) => setForm({ ...form, autoReturnToSubtitlesSeconds: event.target.valueAsNumber })} />
+              <span className="hint" id="auto-return-subtitles-hint">仅在视频正常播放时计时。默认 10 秒，填 0 关闭。</span>
+            </div>
           </div>
         </section>
         <section className="card">

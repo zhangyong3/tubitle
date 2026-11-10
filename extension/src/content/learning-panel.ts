@@ -13,6 +13,7 @@ interface LearningPanelHandlers {
 
 const PANEL_MIN_WIDTH = 320;
 const PANEL_OVERLAY_MAX_WIDTH = 420;
+const REVIEW_MIN_HEIGHT = 240;
 const EDGE_GAP = 12;
 
 const HOST_STYLES = `
@@ -43,9 +44,11 @@ export class PageLearningPanel {
   private pendingWord?: string;
   private frameReady = false;
   private visible = false;
+  private playbackActive = false;
   private manuallyCollapsed = false;
   private forcedOverlay = false;
   private lastBounds?: DOMRect;
+  private keepInView = false;
 
   constructor(private readonly handlers: LearningPanelHandlers) {
     this.host.id = "tubitle-learning-panel-host";
@@ -77,13 +80,22 @@ export class PageLearningPanel {
     this.visible = visible;
     this.host.style.display = visible ? "block" : "none";
     if (!visible) {
+      this.setPlaybackActive(false);
       this.forcedOverlay = false;
       this.host.classList.remove("launcher-only");
     }
   }
 
-  updateLayout(bounds: DOMRect): void {
+  setPlaybackActive(playing: boolean): void {
+    const active = playing && this.visible && !this.host.classList.contains("launcher-only");
+    if (active === this.playbackActive) return;
+    this.playbackActive = active;
+    this.post({ source: "tubitle-host", type: "PANEL_PLAYBACK", playing: active });
+  }
+
+  updateLayout(bounds: DOMRect, keepInView = false): void {
     this.lastBounds = bounds;
+    this.keepInView = keepInView;
     this.applyLayout();
   }
 
@@ -141,6 +153,7 @@ export class PageLearningPanel {
     if (message.type === "PANEL_READY") {
       this.frameReady = true;
       if (this.snapshot) this.post({ source: "tubitle-host", type: "TRANSCRIPT_STATE", state: this.snapshot });
+      this.post({ source: "tubitle-host", type: "PANEL_PLAYBACK", playing: this.playbackActive });
       if (this.pendingTab) this.post({ source: "tubitle-host", type: "OPEN_PANEL_TAB", tab: this.pendingTab });
       if (this.pendingWord) {
         this.post({ source: "tubitle-host", type: "LOOKUP_WORD", word: this.pendingWord });
@@ -164,6 +177,12 @@ export class PageLearningPanel {
     this.frame.contentWindow?.postMessage(message, chrome.runtime.getURL("").slice(0, -1));
   }
 
+  private panelTop(top: number, height: number): number {
+    return this.keepInView
+      ? Math.max(EDGE_GAP, Math.min(top, window.innerHeight - height - EDGE_GAP))
+      : top;
+  }
+
   private applyLayout(): void {
     if (!this.visible || !this.lastBounds) return;
     const bounds = this.lastBounds;
@@ -173,7 +192,8 @@ export class PageLearningPanel {
     this.host.classList.toggle("launcher-only", launcherOnly);
 
     if (launcherOnly) {
-      this.host.style.top = `${bounds.top + 18}px`;
+      this.setPlaybackActive(false);
+      this.host.style.top = `${this.panelTop(bounds.top + 18, 42)}px`;
       if (canDock) {
         this.host.style.left = `${bounds.right + EDGE_GAP}px`;
         this.host.style.right = "auto";
@@ -189,8 +209,11 @@ export class PageLearningPanel {
     const width = canDock
       ? availableRight
       : Math.min(PANEL_OVERLAY_MAX_WIDTH, Math.max(260, window.innerWidth - 32));
-    this.host.style.top = `${bounds.top}px`;
-    this.host.style.height = `${Math.max(1, bounds.height)}px`;
+    const height = this.keepInView
+      ? Math.min(Math.max(REVIEW_MIN_HEIGHT, bounds.height), Math.max(1, window.innerHeight - 2 * EDGE_GAP))
+      : Math.max(1, bounds.height);
+    this.host.style.top = `${this.panelTop(bounds.top, height)}px`;
+    this.host.style.height = `${height}px`;
     this.host.style.width = `${width}px`;
     if (canDock) {
       this.host.style.left = `${bounds.right + EDGE_GAP}px`;

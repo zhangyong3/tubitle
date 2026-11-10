@@ -22,7 +22,7 @@ import {
   streamSentenceAnalysis,
   type AnalysisQuery
 } from "./shared/analysis-stream";
-import { getSettings } from "./shared/settings";
+import { getSettings, normalizeAutoReturnSeconds } from "./shared/settings";
 import {
   clearSidebarHistory,
   DEFAULT_HISTORY_LIMIT,
@@ -41,7 +41,7 @@ import {
 import { buildTranscriptNotes, formatCaptionTime } from "./shared/transcript-notes";
 
 import {
-  lookupWordNet, PRINCETON_COPYRIGHT, PRINCETON_LICENSE, PRINCETON_NOTICE,
+  lookupWordNet, PRINCETON_LICENSE, PRINCETON_NOTICE,
   WORDNET_COPYRIGHT, WORDNET_LICENSE, WORDNET_NAME, WORDNET_SITE, type WordNetLookup
 } from "./shared/wordnet";
 
@@ -210,6 +210,8 @@ function DictionaryDefinition({ html, css, onSearch, onPlaybackError }: {
 
 function App() {
   const [activeTab, setActiveTab] = useState<SidebarTab>(EMBEDDED ? "subtitles" : "dictionary");
+  const [autoReturnSeconds, setAutoReturnSeconds] = useState(0);
+  const [playing, setPlaying] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptPanelSnapshot>();
   const [transcriptAutoFollow, setTranscriptAutoFollow] = useState(true);
   const [result, setResult] = useState<LookupResult>();
@@ -244,6 +246,8 @@ function App() {
       if (message?.source !== "tubitle-host") return;
       if (message.type === "TRANSCRIPT_STATE") {
         setTranscript(message.state);
+      } else if (message.type === "PANEL_PLAYBACK") {
+        setPlaying(message.playing);
       } else if (message.type === "TRANSCRIPT_ACTIVE") {
         setTranscript((current) => current ? {
           ...current,
@@ -280,6 +284,14 @@ function App() {
     postToHost({ source: "tubitle-panel", type: "PANEL_READY" });
     return () => window.removeEventListener("message", listener);
   }, []);
+
+  useEffect(() => {
+    if (!EMBEDDED || !playing || activeTab === "subtitles" || autoReturnSeconds <= 0) return;
+    const timeout = window.setTimeout(() => {
+      setActiveTab((current) => current === activeTab ? "subtitles" : current);
+    }, autoReturnSeconds * 1000);
+    return () => window.clearTimeout(timeout);
+  }, [activeTab, autoReturnSeconds, playing, transcript?.videoId]);
 
   function stopAnalysisStream() {
     analysisController.current?.abort();
@@ -395,6 +407,7 @@ function App() {
       getSettings()
     ]).then(([stored, settings]) => {
       setOfflineConfigured(settings.offlineDictionary.configured);
+      setAutoReturnSeconds(settings.autoReturnToSubtitlesSeconds);
       historyLimitRef.current = settings.historyLimit;
       setHistoryLimit(settings.historyLimit);
       const savedHistory = parseSidebarHistory(stored[SIDEBAR_HISTORY_KEY]);
@@ -417,6 +430,7 @@ function App() {
       if (changes.settings) {
         const previous = changes.settings.oldValue as ExtensionSettings | undefined;
         const next = changes.settings.newValue as ExtensionSettings | undefined;
+        setAutoReturnSeconds(normalizeAutoReturnSeconds(next?.autoReturnToSubtitlesSeconds));
         setOfflineConfigured(Boolean(next?.offlineDictionary?.configured));
         const nextHistoryLimit = next?.historyLimit ?? DEFAULT_HISTORY_LIMIT;
         historyLimitRef.current = nextHistoryLimit;
@@ -585,9 +599,11 @@ function App() {
       >
         {lookup ? (
           <>
-            <a className="dictionary-link" href={`https://www.ldoceonline.com/dictionary/${encodeURIComponent(lookup.word.replaceAll(" ", "-"))}`}
-              target="_blank" rel="noopener noreferrer">在朗文查看 <span aria-hidden="true">↗</span></a>
-            <h1 className="word">{lookup.word}</h1>
+            <div className="dictionary-heading">
+              <h1 className="word">{lookup.word}</h1>
+              <a className="dictionary-link" href={`https://www.ldoceonline.com/search/?${new URLSearchParams({ q: lookup.word })}`}
+                target="_blank" rel="noopener noreferrer">在朗文查看 <span aria-hidden="true">↗</span></a>
+            </div>
             <section className="dictionary-source" aria-labelledby="wordnet-heading">
               <h2 id="wordnet-heading">{WORDNET_NAME}</h2>
               <div aria-live="polite">
@@ -607,15 +623,15 @@ function App() {
                     ))}</ol>
                   </>}
               </div>
-              <div className="dictionary-credit">
-                <a href={WORDNET_SITE} target="_blank" rel="noopener noreferrer">{WORDNET_NAME}</a> · {WORDNET_COPYRIGHT}
-                {" "}<a href={WORDNET_LICENSE} target="_blank" rel="noopener noreferrer">CC BY 4.0</a> · 节选释义和例句，重新排版。
-                <details>
-                  <summary>{PRINCETON_COPYRIGHT}</summary>
-                  <p lang="en">{PRINCETON_NOTICE}</p>
-                  <a href={PRINCETON_LICENSE} target="_blank" rel="noopener noreferrer">Princeton WordNet 许可原文</a>
-                </details>
-              </div>
+              <details className="dictionary-credit">
+                <summary>WordNet 版权与许可 · CC BY 4.0</summary>
+                <p>
+                  <a href={WORDNET_SITE} target="_blank" rel="noopener noreferrer">{WORDNET_NAME}</a> · {WORDNET_COPYRIGHT}
+                  {" "}<a href={WORDNET_LICENSE} target="_blank" rel="noopener noreferrer">CC BY 4.0</a> · 节选释义和例句，重新排版。
+                </p>
+                <p lang="en">{PRINCETON_NOTICE}</p>
+                <a href={PRINCETON_LICENSE} target="_blank" rel="noopener noreferrer">Princeton WordNet 许可原文</a>
+              </details>
             </section>
             {offlineConfigured && (
               <section className="dictionary-source" aria-labelledby="offline-heading">

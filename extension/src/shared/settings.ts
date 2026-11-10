@@ -1,5 +1,7 @@
 import type { ExtensionSettings } from "./types";
 
+export const MAX_AUTO_RETURN_SECONDS = 3600;
+
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   settingsVersion: 6,
   enabled: true,
@@ -8,6 +10,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   excludedLanguages: ["zh"],
   hoverPause: true,
   resumeAfterHover: true,
+  autoReturnToSubtitlesSeconds: 10,
   provider: "microsoft",
   microsoftTranslatorKey: "",
   microsoftTranslatorRegion: "",
@@ -43,6 +46,12 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
 
 const STORAGE_KEY = "settings";
 
+export function normalizeAutoReturnSeconds(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(MAX_AUTO_RETURN_SECONDS, Math.max(0, Math.round(value)))
+    : DEFAULT_SETTINGS.autoReturnToSubtitlesSeconds;
+}
+
 export async function getSettings(): Promise<ExtensionSettings> {
   const result = await chrome.storage.local.get(STORAGE_KEY);
   const raw = result[STORAGE_KEY] as (Partial<ExtensionSettings> & Record<string, unknown>) | undefined;
@@ -63,6 +72,7 @@ export async function getSettings(): Promise<ExtensionSettings> {
   const settings: ExtensionSettings = {
     ...DEFAULT_SETTINGS,
     ...saved,
+    autoReturnToSubtitlesSeconds: normalizeAutoReturnSeconds(saved?.autoReturnToSubtitlesSeconds),
     offlineDictionary: { ...DEFAULT_SETTINGS.offlineDictionary, ...saved?.offlineDictionary },
     offlineDictionaryCss: { ...DEFAULT_SETTINGS.offlineDictionaryCss, ...saved?.offlineDictionaryCss },
     offlineDictionaryResources: { ...DEFAULT_SETTINGS.offlineDictionaryResources, ...saved?.offlineDictionaryResources },
@@ -86,6 +96,7 @@ export async function updateSettings(
   const next = {
     ...current,
     ...patch,
+    autoReturnToSubtitlesSeconds: normalizeAutoReturnSeconds(patch.autoReturnToSubtitlesSeconds ?? current.autoReturnToSubtitlesSeconds),
     offlineDictionary: { ...current.offlineDictionary, ...patch.offlineDictionary },
     offlineDictionaryCss: { ...current.offlineDictionaryCss, ...patch.offlineDictionaryCss },
     offlineDictionaryResources: { ...current.offlineDictionaryResources, ...patch.offlineDictionaryResources },

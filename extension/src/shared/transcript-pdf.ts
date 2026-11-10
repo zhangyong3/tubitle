@@ -27,7 +27,7 @@ const LINE_HEIGHT = 15;
 const NOTE_GAP = 11;
 const EXAMPLE_INSET = 8;
 const EXAMPLE_SLANT_ALLOWANCE = 2;
-const LABELS = "TUBITLE 字幕学习笔记 英文字幕 学习旁批 翻译 句子解析 词典 续 ? 0123456789:/#.-";
+const LABELS = "TUBITLE 字幕学习笔记 英文字幕 学习旁批 句子解析 词典 续 ? 0123456789:/#.-";
 
 const ink = rgb(.12, .16, .23);
 const muted = rgb(.31, .36, .44);
@@ -77,7 +77,7 @@ function getSourceParts(row: TranscriptNoteRow): TextPart[] {
 
 function getNoteSections(row: TranscriptNoteRow): NoteSection[] {
   const sections: NoteSection[] = [];
-  if (row.translation) sections.push({ paragraphs: [{ text: `翻译：${row.translation}` }] });
+  if (row.translation) sections.push({ paragraphs: [{ text: row.translation }] });
   if (row.explanation) sections.push({ paragraphs: [
     { text: "句子解析", kind: "heading" }, { text: row.explanation }
   ] });

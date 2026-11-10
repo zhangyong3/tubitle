@@ -1,7 +1,7 @@
 import { build, context } from "esbuild";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { cp, mkdir, rm } from "node:fs/promises";
+import { resolve } from "node:path";
+import { copyPdfFontAssets } from "./pdf-font-assets.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const app = resolve(root, "extension");
@@ -12,23 +12,7 @@ await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
 await cp(resolve(app, "public"), outdir, { recursive: true });
 
-// Only ship the regular font faces. The PDF renderer loads the faces it needs from the extension.
-const require = createRequire(resolve(app, "package.json"));
-const fontCssPath = require.resolve("@fontsource/noto-sans-sc/400.css");
-const fontRoot = dirname(fontCssPath);
-const fontDirectory = resolve(outdir, "pdf-fonts");
-const fontCss = await readFile(fontCssPath, "utf8");
-const faces = Array.from(fontCss.matchAll(/@font-face\s*\{([^}]+)\}/g), ([, block]) => ({
-  file: block.match(/url\(\.\/files\/([^/)]+\.woff)\)/)?.[1],
-  ranges: block.match(/unicode-range:\s*([^;]+)/)?.[1]
-})).filter((face) => face.file && face.ranges);
-if (!faces.length) throw new Error("Missing Unicode ranges for the PDF font");
-await mkdir(fontDirectory, { recursive: true });
-await Promise.all([
-  ...faces.map(({ file }) => cp(resolve(fontRoot, "files", file), resolve(fontDirectory, file))),
-  cp(resolve(fontRoot, "LICENSE"), resolve(fontDirectory, "LICENSE")),
-  writeFile(resolve(fontDirectory, "faces.json"), JSON.stringify(faces))
-]);
+await copyPdfFontAssets(app, resolve(outdir, "pdf-fonts"));
 
 const options = {
   entryPoints: {
