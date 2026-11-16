@@ -53,8 +53,8 @@ interface PositionedCue extends CaptionCue {
   offset: number;
 }
 
+// Preferred size for packing complete sentences; a single sentence may exceed it.
 const CAPTION_LENGTH = 120;
-const MIN_SOFT_BREAK = 40;
 const JOIN_GAP_MS = 1400;
 
 function isRollingPrefix(prefix: string, text: string): boolean {
@@ -88,37 +88,7 @@ function isAbbreviation(text: string, period: number): boolean {
     (/\b\p{Lu}\.$/u.test(left) && /^\s+\p{Lu}\p{Ll}/u.test(right));
 }
 
-function splitLongCaption(text: string, start: number, end: number, breaks: Map<number, number>, emit: (start: number, end: number) => void) {
-  while (end - start > CAPTION_LENGTH) {
-    const window = text.slice(start, start + CAPTION_LENGTH + 1);
-    const candidates = [...window.matchAll(/ +|(?<=[，；：、])(?=\S)/gu)].flatMap((match) => {
-      const offset = match.index;
-      if (offset > CAPTION_LENGTH || offset === 0) return [];
-      const next = offset + match[0].length;
-      const left = window.slice(0, offset);
-      const right = text.slice(start + next, end);
-      const pause = breaks.get(start + next) ?? 0;
-      const score = /[,;:，；：、]["”’')\]]*$/u.test(left) ? 3 : pause >= 220 ? 2 :
-        /^(?:and|but|so|yet|because|although|while|which|where|when)\b/i.test(right) ? 1 : 0;
-      return [{ offset, next, score }];
-    });
-    const cut = candidates.filter((item) => item.offset >= MIN_SOFT_BREAK && end - start - item.next >= 20)
-      .sort((a, b) => b.score - a.score || b.offset - a.offset)[0] ?? candidates.at(-1);
-    if (!cut) {
-      // Never slice a word (or a URL) merely because it exceeds the preferred width.
-      const nextSpace = text.indexOf(" ", start + CAPTION_LENGTH);
-      if (nextSpace < 0 || nextSpace >= end) break;
-      emit(start, nextSpace);
-      start = nextSpace + 1;
-    } else {
-      emit(start, start + cut.offset);
-      start += cut.next;
-    }
-  }
-  if (start < end) emit(start, end);
-}
-
-export function cuesToSentences(input: CaptionCue[]): CaptionSentence[] {
+function groupCaptionCues(input: CaptionCue[], preferredLength: number): CaptionSentence[] {
   const ordered = input
     .map((cue) => ({ ...cue, text: normalizeText(cue.text), endMs: Math.max(cue.endMs, cue.startMs + 1) }))
     .filter((cue) => Number.isFinite(cue.startMs) && Number.isFinite(cue.endMs) && Boolean(cue.text))
@@ -145,22 +115,35 @@ export function cuesToSentences(input: CaptionCue[]): CaptionSentence[] {
       const endMs = timeAt(end);
       sentences.push({ id: `${Math.round(startMs)}-${sentences.length}`, text: text.slice(start, end), startMs, endMs: Math.max(startMs + 1, endMs) });
     };
+    let captionStart = 0;
+    let captionEnd = 0;
+    const appendSentence = (start: number, end: number) => {
+      if (start >= end) return;
+      // Only complete sentence boundaries can end a caption. Length and pauses
+      // decide whether the next sentence fits, never where to split a sentence.
+      if (captionEnd > captionStart &&
+        (end - captionStart > preferredLength || (breaks.get(start) ?? 0) > JOIN_GAP_MS)) {
+        emit(captionStart, captionEnd);
+        captionStart = start;
+      }
+      captionEnd = end;
+    };
     let start = 0;
     for (const match of text.matchAll(/[.!?。！？]+["”’')\]]*/gu)) {
       const end = match.index + match[0].length;
       if (match[0] === "." && isAbbreviation(text, match.index)) continue;
       if (/^[.!?]/.test(match[0]) && end < text.length && text[end] !== " ") continue;
-      splitLongCaption(text, start, end, breaks, emit);
+      appendSentence(start, end);
       start = end + (text[end] === " " ? 1 : 0);
     }
-    splitLongCaption(text, start, text.length, breaks, emit);
+    appendSentence(start, text.length);
+    if (captionEnd > captionStart) emit(captionStart, captionEnd);
     block = [];
     text = "";
   }
 
   for (const cue of collapseRollingCues(ordered)) {
     const previous = block.at(-1);
-    if (previous && cue.startMs - previous.endMs > JOIN_GAP_MS) flushBlock();
     const addition = previous && block.length && cue.startMs < previous.endMs
       ? removeOverlap(previous.text, cue.text)
       : cue.text;
@@ -171,6 +154,10 @@ export function cuesToSentences(input: CaptionCue[]): CaptionSentence[] {
   }
   flushBlock();
   return sentences;
+}
+
+export function cuesToSentences(input: CaptionCue[]): CaptionSentence[] {
+  return groupCaptionCues(input, CAPTION_LENGTH);
 }
 
 function json3Cues(body: string): CaptionCue[] | undefined {
@@ -269,7 +256,9 @@ export async function fetchBilingualCaptions(tracks: CaptionTrack[], settings: E
   const target = matching.find((track) => track.kind !== "asr") ?? matching[0];
   if (!target) return result;
   try {
-    const translated = cuesToSentences(await fetchTrackCues(target));
+    // Keep target sentences separate for time alignment; packing them can attach
+    // the translation of a neighbouring sentence to multiple source captions.
+    const translated = groupCaptionCues(await fetchTrackCues(target), 0);
     for (const sentence of sentences) {
       const matches = translated.filter((candidate) => candidate.startMs < sentence.endMs + 400 && candidate.endMs > sentence.startMs - 400);
       const text = matches.map((candidate) => candidate.text).join(" ").replace(/\s+/g, " ").trim();

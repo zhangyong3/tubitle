@@ -15,7 +15,7 @@ describe("subtitle entity decoding", () => {
   });
   it("decodes captions before sentence splitting and display", () => {
     expect(cuesToSentences([{ text: 'It&#39;s a scam. &quot;Hang up.&quot;', startMs: 0, endMs: 3000 }]).map((sentence) => sentence.text))
-      .toEqual(["It's a scam.", '"Hang up."']);
+      .toEqual(['It\'s a scam. "Hang up."']);
   });
   it("returns encoded markup as plain text", () => {
     expect(decodeTextEntities('&lt;img src=x onerror=alert(1)&gt;')).toBe('<img src=x onerror=alert(1)>');
