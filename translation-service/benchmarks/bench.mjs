@@ -14,13 +14,13 @@ if (!fixtures.length) throw new Error('No benchmark samples for BENCH_TARGET');
 if (kinds.some(kind => !fixtures.some(sample => sample.kind === kind))) throw new Error('No benchmark samples for BENCH_KIND');
 if (concurrencyLevels.some(n => !Number.isSafeInteger(n) || n < 1)) throw new Error('BENCH_CONCURRENCY must be a positive integer');
 
-async function translate({ id, text, target }) {
+async function translate({ id, text, target, source }) {
   const start = performance.now();
   try {
     const response = await fetch(`${base}/v1/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, target }),
+      body: JSON.stringify({ text, target, expectedModel: activeModel.model, ...(source && { source }) }),
       signal: AbortSignal.timeout(95_000),
     });
     const result = await response.json();
@@ -32,6 +32,7 @@ async function translate({ id, text, target }) {
 
 const ready = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000) });
 if (!ready.ok) throw new Error('Inference is not ready');
+const activeModel = await ready.json();
 
 function percentile(values, fraction) {
   if (!values.length) return null;
@@ -77,7 +78,8 @@ const report = {
   date: new Date().toISOString(),
   backend: process.env.BENCH_BACKEND ?? 'unspecified',
   machine: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, memoryBytes: totalmem(), platform: platform(), arch: arch(), kernel: release() },
-  model: process.env.BENCH_MODEL ?? 'Hy-MT2-1.8B-Q4_K_M',
+  model: process.env.BENCH_MODEL ?? activeModel.model,
+  service: activeModel,
   rounds, warmup, quality, suites,
 };
 await writeFile(output, JSON.stringify(report, null, 2) + '\n');

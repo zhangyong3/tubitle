@@ -41,7 +41,11 @@ function readState() {
 function isRunning(state) {
   if (!Number.isSafeInteger(state?.pid) || state.pid < 2 || !/^[a-f0-9-]{36}$/.test(state.token ?? '')) return false;
   const result = spawnSync('ps', ['-ww', '-p', String(state.pid), '-o', 'command='], { encoding: 'utf8' });
-  return result.status === 0 && result.stdout.trimEnd().endsWith(` _run ${state.name} ${state.token}`);
+  if (result.status !== 0) return false;
+  const command = result.stdout.trimEnd();
+  return state.foreground
+    ? command.endsWith(` run ${state.name}`) || (state.name === defaultModel && command.endsWith(' run'))
+    : command.endsWith(` _run ${state.name} ${state.token}`);
 }
 
 function removeState(token) {
@@ -114,11 +118,11 @@ async function stop() {
   throw new Error(`服务未能停止；查看 ${logFile}`);
 }
 
-async function run(name, token) {
+async function run(name, token, foreground = false) {
   const model = selectModel(name);
   const backend = model.backendCommand(backendPort);
   const pendingState = `${directory}/${token}.json`;
-  writeFileSync(pendingState, JSON.stringify({ name, token, pid: process.pid }), { flag: 'wx' });
+  writeFileSync(pendingState, JSON.stringify({ name, modelId: model.id, token, pid: process.pid, foreground }), { flag: 'wx' });
   try { linkSync(pendingState, stateFile); } finally { unlinkSync(pendingState); }
   const children = [];
   let stopping = false;
@@ -164,6 +168,18 @@ const [action, argument, token] = process.argv.slice(2);
 try {
   switch (action) {
     case 'setup': setup(argument ?? defaultModel); break;
+    case 'run': {
+      const name = argument ?? defaultModel;
+      selectModel(name).backendCommand(backendPort);
+      const old = readState();
+      if (isRunning(old)) throw new Error(`服务已运行（${old.name}）`);
+      if (old) removeState(old.token);
+      await checkPort(port);
+      await checkPort(backendPort);
+      mkdirSync(directory, { recursive: true });
+      await run(name, randomUUID(), true);
+      break;
+    }
     case 'start': await start(argument ?? defaultModel); break;
     case 'stop': await stop(); break;
     case 'restart': {
@@ -177,7 +193,7 @@ try {
       const state = readState();
       const info = await health();
       if (isRunning(state)) {
-        const ready = info !== null && info.model === models.get(state.name)?.id;
+        const ready = info !== null && info.model === (state.modelId ?? models.get(state.name)?.id);
         console.log(`${state.name} ${ready ? '已就绪' : '未就绪'}：${base}`);
         if (!ready) process.exitCode = 1;
       } else {
@@ -189,7 +205,7 @@ try {
     case 'logs': console.log(readFileSync(logFile, 'utf8').trimEnd().split('\n').slice(-40).join('\n')); break;
     case '_run': await run(argument, token); break;
     default:
-      console.log(`用法：bash service.sh setup [${modelNames}] | start [${modelNames}] | restart [${modelNames}] | stop | status | logs`);
+      console.log(`用法：bash service.sh setup [${modelNames}] | start [${modelNames}] | run [${modelNames}] | restart [${modelNames}] | stop | status | logs`);
       if (action && !['help', '--help', '-h'].includes(action)) process.exitCode = 1;
   }
 } catch (error) {

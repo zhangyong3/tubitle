@@ -1,9 +1,11 @@
 import { decodeTextEntities } from "./shared/text-entities";
 import { providerLanguage } from "./shared/languages";
 import type { ExtensionSettings, TranslationProvider } from "./shared/types";
+import { DEFAULT_SETTINGS } from "./shared/settings";
+import { tubitleConnection } from "./shared/tubitle-connection";
 
 const tencentHost = "tmt.tencentcloudapi.com";
-export const LOCAL_TRANSLATION_ORIGIN = "http://127.0.0.1:18081";
+export { LOCAL_TRANSLATION_ORIGIN } from "./shared/tubitle-connection";
 
 export class MicrosoftRateLimitError extends Error {
   constructor(readonly retryAfterMs: number) {
@@ -83,35 +85,40 @@ async function google(text: string, settings: ExtensionSettings, source = "", si
   return decodeTextEntities(result);
 }
 
-let pendingTubitleHealth: Promise<string> | undefined;
+const pendingTubitleHealth = new Map<string, Promise<string>>();
 
-export function getTubitleModel(): Promise<string> {
-  if (!pendingTubitleHealth) {
-    pendingTubitleHealth = (async () => {
+export function getTubitleModel(settings: ExtensionSettings = DEFAULT_SETTINGS): Promise<string> {
+  const { origin, headers } = tubitleConnection(settings);
+  const key = JSON.stringify([origin, headers]);
+  let pendingHealth = pendingTubitleHealth.get(key);
+  if (!pendingHealth) {
+    pendingHealth = (async () => {
       let response: Response;
       try {
-        response = await fetch(`${LOCAL_TRANSLATION_ORIGIN}/health`, {
-          cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(3000)
+        response = await fetch(`${origin}/health`, {
+          headers, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(5000)
         });
       } catch {
-        throw new Error(`无法连接 Tubitle 翻译服务，请确认服务已启动（${LOCAL_TRANSLATION_ORIGIN}）`);
+        throw new Error(`无法连接 Tubitle 翻译服务，请确认地址与服务状态（${origin}）`);
       }
       if (!response.ok) throw new Error("Tubitle 翻译服务尚未就绪，请确认模型已加载");
       const payload = await response.json() as { ready?: boolean; model?: string };
       if (!payload.ready || typeof payload.model !== "string" || !payload.model) throw new Error("Tubitle 翻译服务未返回模型信息");
       return payload.model;
-    })().finally(() => { pendingTubitleHealth = undefined; });
+    })().finally(() => { pendingTubitleHealth.delete(key); });
+    pendingTubitleHealth.set(key, pendingHealth);
   }
-  return pendingTubitleHealth;
+  return pendingHealth;
 }
 
 async function tubitle(text: string, settings: ExtensionSettings, source: string, signal?: AbortSignal, expectedModel?: string): Promise<string> {
+  const { origin, headers } = tubitleConnection(settings);
   const requestSignal = translationSignal(signal);
   let response: Response;
   try {
-    response = await fetch(`${LOCAL_TRANSLATION_ORIGIN}/v1/translate`, {
+    response = await fetch(`${origin}/v1/translate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({ text, target: providerLanguage(settings.targetLanguage, "hy-mt-local"),
         ...(source ? { source } : {}), ...(expectedModel ? { expectedModel } : {}) }),
       redirect: "error",
@@ -121,7 +128,7 @@ async function tubitle(text: string, settings: ExtensionSettings, source: string
     signal?.throwIfAborted();
     if (requestSignal.aborted) throw new Error("Tubitle 翻译超时，请稍后重试");
     if (!(error instanceof TypeError)) throw error;
-    throw new Error(`无法连接 Tubitle 翻译服务，请确认服务已启动（${LOCAL_TRANSLATION_ORIGIN}）`);
+    throw new Error(`无法连接 Tubitle 翻译服务，请确认地址与服务状态（${origin}）`);
   }
   if (response.status === 503) {
     void response.body?.cancel().catch(() => undefined);

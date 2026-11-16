@@ -13,6 +13,7 @@ import {
 import type { ExtensionSettings, ShortcutSettings, TranslationProvider } from "./shared/types";
 import { selectDictionaryDirectoryFiles } from "./shared/dictionary-directory";
 import { sendMessage } from "./shared/messaging";
+import { tubitleConnection } from "./shared/tubitle-connection";
 
 const shortcutLabels: Record<keyof ShortcutSettings, string> = {
   previous: "上一句",
@@ -40,6 +41,7 @@ function App() {
 
   async function requestApiPermissions(settings: ExtensionSettings): Promise<boolean> {
     const origins = [
+      tubitleConnection(settings).origin,
       settings.microsoftTranslatorKey.trim() && settings.microsoftTranslatorEndpoint,
       settings.llmApiKey.trim() && settings.llmBaseUrl
     ].filter(Boolean).map((value) => {
@@ -51,23 +53,29 @@ function App() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const normalized = {
-      ...form,
-      microsoftTranslatorEndpoint: form.microsoftTranslatorEndpoint.trim().replace(/\/+$/, ""),
-      llmBaseUrl: form.llmBaseUrl.trim().replace(/\/+$/, ""),
-      tencentConcurrency: Math.min(5, Math.max(1, Math.round(form.tencentConcurrency) || 3)),
-      historyLimit: Math.min(100, Math.max(1, Math.round(form.historyLimit) || DEFAULT_SETTINGS.historyLimit))
-    };
-    if (!await requestApiPermissions(normalized)) return;
-    setForm(await updateSettings(normalized));
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1800);
+    try {
+      const normalized = {
+        ...form,
+        tubitleBaseUrl: tubitleConnection(form).origin,
+        tubitleApiKey: form.tubitleApiKey.trim(),
+        microsoftTranslatorEndpoint: form.microsoftTranslatorEndpoint.trim().replace(/\/+$/, ""),
+        llmBaseUrl: form.llmBaseUrl.trim().replace(/\/+$/, ""),
+        tencentConcurrency: Math.min(5, Math.max(1, Math.round(form.tencentConcurrency) || 3)),
+        historyLimit: Math.min(100, Math.max(1, Math.round(form.historyLimit) || DEFAULT_SETTINGS.historyLimit))
+      };
+      if (!await requestApiPermissions(normalized)) throw new Error("需要先允许访问所配置的 API 域名");
+      setForm(await updateSettings(normalized));
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1800);
+    } catch (error) {
+      setProviderMessage(error instanceof Error ? error.message : "保存失败");
+    }
   }
 
   async function testProvider(provider: TranslationProvider | "llm") {
     setProviderMessage("正在测试连接…");
     try {
-      if (provider !== "hy-mt-local" && !await requestApiPermissions(form)) throw new Error("需要先允许访问所配置的 API 域名");
+      if (!await requestApiPermissions(form)) throw new Error("需要先允许访问所配置的 API 域名");
       await updateSettings(form);
       await sendMessage({ type: "TEST_PROVIDER", provider });
       setProviderMessage("连接成功 ✓");
@@ -135,7 +143,7 @@ function App() {
   return (
     <main className="page">
       <h1>Tubitle 设置</h1>
-      <p className="lead">纯本地扩展版本。翻译和大模型密钥仅保存在本机浏览器，不经过 Tubitle 服务端，也不会同步到 Chrome 云端。</p>
+      <p className="lead">密钥仅保存在本机浏览器，不会同步到 Chrome 云端。字幕发送至所选翻译服务；使用远程 Tubitle 服务时，会发送至你配置的服务器。</p>
       <form onSubmit={submit}>
         <section className="card">
           <h2>翻译服务</h2>
@@ -151,7 +159,11 @@ function App() {
             </div>
           </div>
           <h3>Tubitle 自研翻译服务</h3>
-          <p className="hint">连接本机服务（127.0.0.1:18081），无需 API 密钥。模型由启动脚本选择；OPUS-MT 仅支持英文译为简体中文。</p>
+          <p className="hint">可连接本机或远程 HTTPS 服务。模型由服务端选择；本机服务无需密钥，公网服务填写管理员提供的访问密钥。</p>
+          <div className="grid">
+            <div className="field full"><label htmlFor="tubitle-base">服务地址</label><input id="tubitle-base" type="url" value={form.tubitleBaseUrl} onChange={(event) => setForm({ ...form, tubitleBaseUrl: event.target.value })} placeholder="https://translate.example.com" /></div>
+            <div className="field full"><label htmlFor="tubitle-key">访问密钥</label><input id="tubitle-key" type="password" value={form.tubitleApiKey} onChange={(event) => setForm({ ...form, tubitleApiKey: event.target.value })} autoComplete="off" /></div>
+          </div>
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("hy-mt-local")}>测试 Tubitle 翻译服务</button></div>
           <h3>腾讯云机器翻译</h3>
           <div className="grid">

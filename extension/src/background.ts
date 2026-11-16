@@ -6,6 +6,7 @@ import { cacheTranslation, getCachedTranslation } from "./background-cache";
 import { getTubitleModel, MicrosoftRateLimitError, requestAnalysis, translateLocally } from "./local-providers";
 import { SmoothRateLimit } from "./shared/smooth-rate-limit";
 import { SUBTITLE_TRANSLATION_PORT, type SubtitleTranslationRequest } from "./shared/subtitle-translation";
+import { tubitleConnection } from "./shared/tubitle-connection";
 
 interface TranslationJob {
   key?: string; text: string; provider: TranslationProvider;
@@ -117,9 +118,9 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
   signal?.throwIfAborted();
   const source = sourceLanguage(text, trackLanguage);
   if (shouldSkipTranslation(source, settings)) return "";
-  const expectedModel = provider === "hy-mt-local" ? await getTubitleModel() : undefined;
+  const expectedModel = provider === "hy-mt-local" ? await getTubitleModel(settings) : undefined;
   signal?.throwIfAborted();
-  const key = translationKey(expectedModel ? `${provider}:${expectedModel}` : provider, text, source, settings.targetLanguage);
+  const key = translationKey(expectedModel ? `${provider}:${tubitleConnection(settings).origin}:${expectedModel}` : provider, text, source, settings.targetLanguage);
   const memory = memoryCache.get(key);
   if (memory) return memory;
   const existing = signal ? undefined : pending.get(key);

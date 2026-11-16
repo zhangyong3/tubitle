@@ -37,7 +37,7 @@
 ```sh
 MODEL_PATH=models/Hy-MT2-1.8B-2Bit.gguf \
   LLAMA_SERVER=.runtime/q2-src/legacy/build/bin/llama-server \
-  LLAMA_PORT=18086 LLAMA_GPU_LAYERS=0 bash src/models/hy-mt2/inference.sh
+  LLAMA_PORT=18086 LLAMA_GPU_LAYERS=0 bash src/models/llama/inference.sh
 ```
 
 ```sh

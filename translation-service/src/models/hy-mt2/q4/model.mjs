@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
-import { createHyMt2Model } from '../adapter.mjs';
+import { createLlamaModel } from '../../llama/adapter.mjs';
 
-export default createHyMt2Model({
+export default createLlamaModel({
   name: 'q4',
   id: 'hy-mt2-1.8b-q4',
   weight: 'models/Hy-MT2-1.8B-Q4_K_M.gguf',

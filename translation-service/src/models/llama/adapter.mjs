@@ -15,11 +15,16 @@ const languages = new Map(Object.entries({
 const targets = [...languages.keys()];
 const inferenceScript = fileURLToPath(new URL('./inference.sh', import.meta.url));
 
-export function createHyMt2Model({ name, id, weight, setupScript, runtime = () => ({}) }) {
+export function createLlamaModel({
+  name, id, weight, setupScript, runtime = () => ({}), targets: supportedTargets = targets,
+  pairError, prompt = ({ text, target }) => `Translate the following text into ${languages.get(target)}. Note that you should only output the translated result without any additional explanation:\n${text}`,
+  generation = {},
+}) {
   return {
     id,
     setupScript,
-    targets,
+    targets: supportedTargets,
+    pairError,
     backendPort: () => process.env.LLAMA_PORT ?? 18080,
     backendCommand(port) {
       const overrides = runtime();
@@ -32,15 +37,16 @@ export function createHyMt2Model({ name, id, weight, setupScript, runtime = () =
         env: { ...process.env, ...overrides, MODEL_PATH: weight, LLAMA_MODEL_ALIAS: id, LLAMA_PORT: String(port) },
       };
     },
-    async translate(origin, { text, target }, signal) {
+    async translate(origin, { text, target, source }, signal) {
       const result = await requestInference(`${origin}/v1/chat/completions`, {
         model: id,
         messages: [{
           role: 'user',
-          content: `Translate the following text into ${languages.get(target)}. Note that you should only output the translated result without any additional explanation:\n${text}`,
+          content: prompt({ text, target, source }),
         }],
         temperature: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05,
         max_tokens: 768, cache_prompt: false, seed: 42, stream: false, timings_per_token: true,
+        ...generation,
       }, signal);
       const choice = result.choices?.[0];
       return {

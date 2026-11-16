@@ -1,0 +1,7 @@
+[Unit]
+Description=Check Tubitle inference health
+After=tubitle-translation.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/tubitle-translation/deploy/health-check.sh

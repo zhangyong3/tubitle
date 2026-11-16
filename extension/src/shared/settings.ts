@@ -3,7 +3,7 @@ import type { ExtensionSettings } from "./types";
 export const MAX_AUTO_RETURN_SECONDS = 3600;
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  settingsVersion: 6,
+  settingsVersion: 7,
   enabled: true,
   showChinese: true,
   targetLanguage: "zh",
@@ -12,6 +12,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   resumeAfterHover: true,
   autoReturnToSubtitlesSeconds: 10,
   provider: "microsoft",
+  tubitleBaseUrl: "http://127.0.0.1:18081",
+  tubitleApiKey: "",
   microsoftTranslatorKey: "",
   microsoftTranslatorRegion: "",
   microsoftTranslatorEndpoint: "https://api.cognitive.microsofttranslator.com",

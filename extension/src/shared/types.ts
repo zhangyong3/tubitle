@@ -30,6 +30,8 @@ export interface ExtensionSettings {
   resumeAfterHover: boolean;
   autoReturnToSubtitlesSeconds: number;
   provider: TranslationProvider;
+  tubitleBaseUrl: string;
+  tubitleApiKey: string;
   microsoftTranslatorKey: string;
   microsoftTranslatorRegion: string;
   microsoftTranslatorEndpoint: string;

@@ -1,0 +1,32 @@
+[Unit]
+Description=Tubitle translation API and CPU inference
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=tubitle
+Group=tubitle
+WorkingDirectory=/opt/tubitle-translation
+EnvironmentFile=/etc/tubitle-translation.env
+ExecStart=/usr/bin/node src/runtime/service.mjs run ${TUBITLE_MODEL}
+ExecStartPost=/bin/bash /opt/tubitle-translation/deploy/wait-ready.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=100
+TimeoutStopSec=15
+KillMode=control-group
+MemoryAccounting=yes
+MemoryHigh=5G
+MemoryMax=6G
+TasksMax=128
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/tubitle-translation/.runtime /opt/tubitle-translation/results
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
