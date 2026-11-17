@@ -1,4 +1,6 @@
 import { decodeTextEntities } from "../shared/text-entities";
+import { selectSourceTrack } from "../shared/caption-tracks";
+export { selectSourceTrack } from "../shared/caption-tracks";
 import { languageFamily, shouldSkipTranslation } from "../shared/languages";
 import { DEFAULT_SETTINGS } from "../shared/settings";
 import type { ExtensionSettings } from "../shared/types";
@@ -53,8 +55,10 @@ interface PositionedCue extends CaptionCue {
   offset: number;
 }
 
-// Preferred size for packing complete sentences; a single sentence may exceed it.
+// Pack short sentences to this size, but preserve individual sentences up to 200.
 const CAPTION_LENGTH = 120;
+const MAX_CAPTION_LENGTH = 200;
+const MIN_CLAUSE_LENGTH = 80;
 const JOIN_GAP_MS = 1400;
 
 function isRollingPrefix(prefix: string, text: string): boolean {
@@ -88,11 +92,46 @@ function isAbbreviation(text: string, period: number): boolean {
     (/\b\p{Lu}\.$/u.test(left) && /^\s+\p{Lu}\p{Ll}/u.test(right));
 }
 
-function groupCaptionCues(input: CaptionCue[], preferredLength: number): CaptionSentence[] {
-  const ordered = input
+function splitOversizedSentence(
+  text: string, start: number, end: number, breaks: Map<number, number>,
+  emit: (start: number, end: number) => void
+) {
+  while (end - start > MAX_CAPTION_LENGTH) {
+    const window = text.slice(start, start + MAX_CAPTION_LENGTH + 1);
+    const candidates = [...window.matchAll(/ +|(?<=[，；：、—])(?=\S)/gu)].flatMap((match) => {
+      const cut = start + match.index;
+      const next = cut + match[0].length;
+      if (cut === start || cut - start > MAX_CAPTION_LENGTH) return [];
+      const left = text.slice(start, cut);
+      const right = text.slice(next, Math.min(end, next + 40));
+      const pause = breaks.get(next);
+      const score = /[,;:，；：、—]["”’')\]]*$/u.test(left) ? 4 :
+        (pause ?? 0) >= 400 ? 3 :
+        /^(?:and|but|so|yet|because|although|while|whereas|however|then|which|when|for example)\b/i.test(right) ? 2 :
+        pause !== undefined ? 1 : 0;
+      return [{ cut, next, score }];
+    });
+    const natural = candidates.filter(({ cut, next }) => cut - start >= MIN_CLAUSE_LENGTH && end - next >= 40);
+    const boundary = natural.sort((a, b) => b.score - a.score || b.cut - a.cut)[0] ?? candidates.at(-1);
+    // Fall back to character boundaries only for text without usable spaces or
+    // clause punctuation (e.g. unpunctuated CJK), preserving surrogate pairs.
+    let cut = boundary?.cut ?? start + MAX_CAPTION_LENGTH;
+    if (!boundary && /[\uD800-\uDBFF]/u.test(text[cut - 1]!)) cut--;
+    emit(start, cut);
+    start = boundary?.next ?? cut;
+  }
+  if (start < end) emit(start, end);
+}
+
+function normalizeCues(input: CaptionCue[]): CaptionCue[] {
+  return input
     .map((cue) => ({ ...cue, text: normalizeText(cue.text), endMs: Math.max(cue.endMs, cue.startMs + 1) }))
     .filter((cue) => Number.isFinite(cue.startMs) && Number.isFinite(cue.endMs) && Boolean(cue.text))
     .sort((left, right) => left.startMs - right.startMs);
+}
+
+function groupCaptionCues(input: CaptionCue[], preferredLength: number): CaptionSentence[] {
+  const ordered = normalizeCues(input);
   const sentences: CaptionSentence[] = [];
   let block: PositionedCue[] = [];
   let text = "";
@@ -119,8 +158,14 @@ function groupCaptionCues(input: CaptionCue[], preferredLength: number): Caption
     let captionEnd = 0;
     const appendSentence = (start: number, end: number) => {
       if (start >= end) return;
-      // Only complete sentence boundaries can end a caption. Length and pauses
-      // decide whether the next sentence fits, never where to split a sentence.
+      if (end - start > MAX_CAPTION_LENGTH) {
+        if (captionEnd > captionStart) emit(captionStart, captionEnd);
+        splitOversizedSentence(text, start, end, breaks, emit);
+        captionStart = captionEnd = end;
+        return;
+      }
+      // Preserve complete sentences unless they exceed the hard reading limit.
+      if (captionStart === captionEnd) captionStart = start;
       if (captionEnd > captionStart &&
         (end - captionStart > preferredLength || (breaks.get(start) ?? 0) > JOIN_GAP_MS)) {
         emit(captionStart, captionEnd);
@@ -237,35 +282,55 @@ export async function fetchEnglishSentences(
   return sentences;
 }
 
-export function selectSourceTrack(tracks: CaptionTrack[]): CaptionTrack | undefined {
-  const english = tracks.filter((track) => /^en(?:-|$)/i.test(track.languageCode));
-  return english.find((track) => track.kind !== "asr") ?? english[0] ?? tracks.find((track) => track.kind === "asr") ?? tracks[0];
-}
-
-export async function fetchBilingualCaptions(tracks: CaptionTrack[], settings: ExtensionSettings = DEFAULT_SETTINGS): Promise<BilingualCaptions> {
+export async function fetchBilingualCaptions(
+  tracks: CaptionTrack[], settings: ExtensionSettings = DEFAULT_SETTINGS,
+  transcriptFallback?: (languageCode: string) => Promise<CaptionCue[]>
+): Promise<BilingualCaptions> {
+  const loadCues = async (track: CaptionTrack): Promise<CaptionCue[]> => {
+    try {
+      return await fetchTrackCues(track);
+    } catch (error) {
+      if (!transcriptFallback) throw error;
+      return transcriptFallback(track.languageCode);
+    }
+  };
   const source = selectSourceTrack(tracks);
   if (!source) throw new Error("这个视频没有可用的字幕");
-  const sentences = cuesToSentences(await fetchTrackCues(source));
-  if (!sentences.length) throw new Error("字幕轨道为空");
-  const officialTranslations = new Map<string, string>();
-  const result = { sentences, officialTranslations, sourceLanguage: source.languageCode };
-  if (settings.provider === "hy-mt-local" || shouldSkipTranslation(source.languageCode, settings)) return result;
+  const sourceCues = normalizeCues(await loadCues(source));
+  if (!sourceCues.length) throw new Error("字幕轨道为空");
   const targets = tracks.filter((track) => languageFamily(track.languageCode) === languageFamily(settings.targetLanguage));
   const traditional = /(?:tw|hant|hk)/i.test(settings.targetLanguage);
   const matching = targets.filter((track) => languageFamily(settings.targetLanguage) !== "zh" || /(?:tw|hant|hk)/i.test(track.languageCode) === traditional);
-  const target = matching.find((track) => track.kind !== "asr") ?? matching[0];
+  const target = shouldSkipTranslation(source.languageCode, settings) ? undefined :
+    matching.find((track) => track.kind !== "asr") ?? matching[0];
+  // When both tracks exist, retain their authored text and timing. Independent
+  // sentence regrouping destroys the original correspondence between tracks.
+  const sentences = target ? sourceCues.map((cue, index) => ({ ...cue, id: `${Math.round(cue.startMs)}-${index}` })) :
+    cuesToSentences(sourceCues);
+  const officialTranslations = new Map<string, string>();
+  const result: BilingualCaptions = { sentences, officialTranslations, sourceLanguage: source.languageCode };
   if (!target) return result;
   try {
-    // Keep target sentences separate for time alignment; packing them can attach
-    // the translation of a neighbouring sentence to multiple source captions.
-    const translated = groupCaptionCues(await fetchTrackCues(target), 0);
-    for (const sentence of sentences) {
-      const matches = translated.filter((candidate) => candidate.startMs < sentence.endMs + 400 && candidate.endMs > sentence.startMs - 400);
-      const text = matches.map((candidate) => candidate.text).join(" ").replace(/\s+/g, " ").trim();
-      if (text) officialTranslations.set(sentence.id, text);
+    const translated = normalizeCues(await loadCues(target));
+    const candidates = sentences.map((sentence) => translated.flatMap((candidate, index) => {
+      const overlap = Math.min(sentence.endMs, candidate.endMs) - Math.max(sentence.startMs, candidate.startMs);
+      // Allow small timestamp rounding differences, not partial overlaps or a
+      // target paragraph spanning several source cues. Ambiguity uses translation.
+      return Math.abs(sentence.startMs - candidate.startMs) <= 100 && Math.abs(sentence.endMs - candidate.endMs) <= 100 &&
+        overlap >= 0.9 * Math.max(sentence.endMs - sentence.startMs, candidate.endMs - candidate.startMs) ? [index] : [];
+    }));
+    const uses = new Map<number, number>();
+    for (const matches of candidates) {
+      for (const index of matches) uses.set(index, (uses.get(index) ?? 0) + 1);
+    }
+    for (const [index, matches] of candidates.entries()) {
+      const targetIndex = matches[0];
+      if (matches.length === 1 && targetIndex !== undefined && uses.get(targetIndex) === 1) {
+        officialTranslations.set(sentences[index]!.id, translated[targetIndex]!.text);
+      }
     }
   } catch {
-    // An optional target track must not prevent the source captions from working.
+    // Missing/unreadable official translations fall through to the configured service.
   }
   return result;
 }

@@ -150,7 +150,7 @@ function applySettings(): void {
   if (settings.showChinese && activeIndex >= 0) void translateSentence(sentences[activeIndex]!);
 }
 
-function requestTranscript(videoId: string): Promise<TranscriptCue[]> {
+function requestTranscript(videoId: string, languageCode?: string): Promise<TranscriptCue[]> {
   const requestId = crypto.randomUUID();
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
@@ -172,7 +172,7 @@ function requestTranscript(videoId: string): Promise<TranscriptCue[]> {
     };
     document.addEventListener("tubitle:transcript", onResponse);
     document.dispatchEvent(new CustomEvent("tubitle:request-transcript", {
-      detail: { requestId, videoId }
+      detail: { requestId, videoId, languageCode }
     }));
   });
 }
@@ -229,7 +229,7 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
   try {
     let loaded;
     try {
-      loaded = await fetchBilingualCaptions(tracks, settings);
+      loaded = await fetchBilingualCaptions(tracks, settings, (languageCode) => requestTranscript(videoId, languageCode));
     } catch (captionError) {
       if (!isCurrentCaptionLoad(version)) return;
       try {

@@ -44,6 +44,7 @@ export const Route = createFileRoute('/')({
       localizeUrl(`${envConfigs.app_url}/`, { locale: loc as any }).href;
     return {
       meta: [
+        { title: m['common.metadata.title']({}, { locale: locale as any }) },
         {
           name: 'description',
           content: m['landing.hero.subheadline']({}, { locale: locale as any }),

@@ -76,8 +76,26 @@ export function findSearchableTranscriptParams(value: unknown, depth = 0): strin
   return undefined;
 }
 
+export function findTranscriptPanelRequest(value: unknown, depth = 0): { panelId: string; params: string } | undefined {
+  if (depth > 24 || !value || typeof value !== "object") return;
+  const object = value as Record<string, unknown>;
+  const update = object.updateEngagementPanelContentCommand as {
+    contentSourcePanelIdentifier?: { tag?: string }; globalConfiguration?: { params?: string }
+  } | undefined;
+  const panelId = update?.contentSourcePanelIdentifier?.tag;
+  const params = update?.globalConfiguration?.params;
+  if (typeof panelId === "string" && /transcript/i.test(panelId) && typeof params === "string" && params) {
+    return { panelId, params };
+  }
+  for (const child of Object.values(object)) {
+    const found = findTranscriptPanelRequest(child, depth + 1);
+    if (found) return found;
+  }
+}
+
 export function transcriptCuesFromResponse(value: unknown): TranscriptCue[] {
   const result: TranscriptCue[] = [];
+  const modernRows: TranscriptRow[] = [];
   const visit = (node: unknown, depth: number): void => {
     if (depth > 24 || node === null || typeof node !== "object") return;
     if (Array.isArray(node)) {
@@ -85,6 +103,13 @@ export function transcriptCuesFromResponse(value: unknown): TranscriptCue[] {
       return;
     }
     const object = node as Record<string, unknown>;
+    const model = object.transcriptSegmentViewModel as { simpleText?: string; timestamp?: string } | undefined;
+    if (model) {
+      if (typeof model.simpleText === "string" && typeof model.timestamp === "string") {
+        modernRows.push({ text: model.simpleText, timestamp: model.timestamp });
+      }
+      return;
+    }
     const renderer = object.transcriptSegmentRenderer;
     if (renderer && typeof renderer === "object") {
       const segment = renderer as Record<string, unknown>;
@@ -100,5 +125,5 @@ export function transcriptCuesFromResponse(value: unknown): TranscriptCue[] {
     for (const child of Object.values(object)) visit(child, depth + 1);
   };
   visit(value, 0);
-  return result.sort((left, right) => left.startMs - right.startMs);
+  return [...result, ...transcriptCuesFromRows(modernRows)].sort((left, right) => left.startMs - right.startMs);
 }

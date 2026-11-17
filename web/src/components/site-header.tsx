@@ -23,7 +23,7 @@ const isExternalHref = (href: string) => /^https?:\/\//.test(href);
 
 export function SiteHeader({ navLinks }: { navLinks?: NavLink[] }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { data: session } = useSession();
+  const { data: session, isPending } = useSession();
   const user = session?.user;
 
   return (
@@ -72,6 +72,8 @@ export function SiteHeader({ navLinks }: { navLinks?: NavLink[] }) {
               email={user.email}
               image={user.image}
             />
+          ) : isPending ? (
+            <span className="size-9 shrink-0" aria-hidden="true" />
           ) : (
             <Link href="/settings" className={cn(buttonVariants(), 'gap-1.5')}>
               {m['common.nav.get_started']()}
@@ -130,6 +132,8 @@ export function SiteHeader({ navLinks }: { navLinks?: NavLink[] }) {
                 email={user.email}
                 image={user.image}
               />
+            ) : isPending ? (
+              <span className="size-9 shrink-0" aria-hidden="true" />
             ) : (
               <Link
                 href="/settings"

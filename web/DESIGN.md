@@ -2,11 +2,11 @@
 
 ## Theme
 
-A quiet learning notebook: warm paper, charcoal ink, terracotta emphasis. Product demonstrations carry the first screen; no invented testimonials or usage statistics.
+A quiet learning notebook: pale lavender paper, charcoal-violet ink, muted violet emphasis. Product demonstrations carry the first screen; no invented testimonials or usage statistics.
 
 ## Palette
 
-Canvas: oklch(0.98 0.008 80). Ink: oklch(0.25 0.015 50). Accent: oklch(0.51 0.14 40). Muted surface: oklch(0.94 0.012 80). Success uses the existing semantic green treatment.
+Canvas: oklch(0.98 0.008 295). Ink: oklch(0.25 0.015 295). Logo: #9480D2, flat with no gradients, highlights or shadows. Action accent: #7863B5 for readable white labels; dark-mode accent: #B9A5EF. Muted surface: oklch(0.94 0.012 295). Success uses the existing semantic green treatment.
 
 ## Typography
 

@@ -1,5 +1,7 @@
-import { captionTracksForVideo, type YouTubePlayerResponse } from "./shared/caption-tracks";
+import { captionTracksForVideo, selectSourceTrack, type YouTubePlayerResponse } from "./shared/caption-tracks";
+import { languageFamily, sourceLanguage } from "./shared/languages";
 import {
+  findTranscriptPanelRequest,
   findSearchableTranscriptParams,
   findTranscriptParams,
   transcriptCuesFromResponse,
@@ -111,14 +113,30 @@ function watchDataVideoId(data: unknown): string | undefined {
     ?.currentVideoEndpoint?.watchEndpoint?.videoId;
 }
 
-async function fetchTranscriptFromApi(videoId: string) {
+function transcriptMatchesLanguage(cues: TranscriptCue[], expected?: string): boolean {
+  if (!expected) return true;
+  const detected = sourceLanguage(cues.map((cue) => cue.text).join(" "));
+  const family = languageFamily(expected);
+  // Script detection can reliably reject a localized CJK fallback. For Latin
+  // languages we rely on the language explicitly requested from YouTube.
+  return detected ? languageFamily(detected) === family : !["zh", "ja", "ko"].includes(family);
+}
+
+async function fetchTranscriptFromApi(videoId: string, languageCode?: string) {
   if (new URL(location.href).searchParams.get("v") !== videoId) throw new Error("视频已经切换");
   const watchData = (document.querySelector("ytd-watch-flexy") as (HTMLElement & { data?: unknown }) | null)?.data;
   const apiKey = window.ytcfg?.get?.("INNERTUBE_API_KEY");
-  const context = window.ytcfg?.get?.("INNERTUBE_CONTEXT");
-  if (typeof apiKey !== "string" || !context || typeof context !== "object") {
+  const pageContext = window.ytcfg?.get?.("INNERTUBE_CONTEXT");
+  if (typeof apiKey !== "string" || !pageContext || typeof pageContext !== "object") {
     throw new Error("YouTube 没有提供可读取的文字稿入口");
   }
+  // Transcript defaults follow the interface locale, independently of the
+  // player's selected captions. Request metadata in the source track language.
+  const tracks = readTracks();
+  const source = languageCode ? tracks.find((track) => track.languageCode === languageCode) : selectSourceTrack(tracks);
+  if (languageCode && !source) throw new Error("视频没有提供所选语言的字幕轨道");
+  const originalContext = pageContext as { client?: { hl?: string } };
+  const context = source ? { ...pageContext, client: { ...originalContext.client, hl: source.languageCode } } : pageContext;
   const client = (context as { client?: {
     clientVersion?: string;
     visitorData?: string;
@@ -152,17 +170,18 @@ async function fetchTranscriptFromApi(videoId: string) {
     nextVideoId && nextVideoId !== videoId ? undefined : nextData,
     ...[watchData, window.ytInitialData].filter((data) => watchDataVideoId(data) === videoId)
   ];
-  const params = sources.map((data) => findSearchableTranscriptParams(data) ?? findTranscriptParams(data)).find(Boolean);
+  const panel = sources.map((data) => findTranscriptPanelRequest(data)).find(Boolean);
+  const params = panel?.params ?? sources.map((data) => findSearchableTranscriptParams(data) ?? findTranscriptParams(data)).find(Boolean);
   if (!params) throw new Error("YouTube 没有返回当前视频的文字稿入口");
 
   if (new URL(location.href).searchParams.get("v") !== videoId) throw new Error("视频已经切换");
   let response: Response;
   try {
-    response = await fetchWithTimeout(`/youtubei/v1/get_transcript?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
+    response = await fetchWithTimeout(`/youtubei/v1/${panel ? "get_panel" : "get_transcript"}?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
       method: "POST",
       credentials: "include",
       headers,
-      body: JSON.stringify({ context, params })
+      body: JSON.stringify({ context, params, ...(panel ? { panelId: panel.panelId } : {}) })
     }, 2500);
   } catch {
     throw new Error("YouTube 文字稿接口响应超时");
@@ -170,6 +189,7 @@ async function fetchTranscriptFromApi(videoId: string) {
   if (!response.ok) throw await youtubeResponseError(response);
   const cues = transcriptCuesFromResponse(await response.json());
   if (cues.length === 0) throw new Error("YouTube 文字稿为空");
+  if (!transcriptMatchesLanguage(cues, source?.languageCode)) throw new Error("YouTube 返回的文字稿语言与所选字幕不一致");
   if (new URL(location.href).searchParams.get("v") !== videoId) throw new Error("视频已经切换");
   return cues;
 }
@@ -246,9 +266,9 @@ async function fetchNativeTranscript(videoId: string): Promise<TranscriptCue[]> 
   return [];
 }
 
-async function fetchTranscript(videoId: string): Promise<TranscriptCue[]> {
+async function fetchTranscript(videoId: string, languageCode?: string): Promise<TranscriptCue[]> {
   try {
-    return await fetchTranscriptFromApi(videoId);
+    return await fetchTranscriptFromApi(videoId, languageCode);
   } catch (error) {
     let pending = pendingNativeTranscripts.get(videoId);
     if (!pending) {
@@ -256,15 +276,16 @@ async function fetchTranscript(videoId: string): Promise<TranscriptCue[]> {
       pendingNativeTranscripts.set(videoId, pending);
     }
     const cues = await pending;
-    if (cues.length) return cues;
+    const expected = languageCode ?? selectSourceTrack(readTracks())?.languageCode;
+    if (cues.length && transcriptMatchesLanguage(cues, expected)) return cues;
     throw error;
   }
 }
 
 document.addEventListener("tubitle:request-transcript", (event) => {
-  const detail = (event as CustomEvent<{ requestId?: string; videoId?: string }>).detail;
+  const detail = (event as CustomEvent<{ requestId?: string; videoId?: string; languageCode?: string }>).detail;
   if (!detail?.requestId || !detail.videoId) return;
-  void fetchTranscript(detail.videoId).then(
+  void fetchTranscript(detail.videoId, detail.languageCode).then(
     (cues) => document.dispatchEvent(new CustomEvent("tubitle:transcript", {
       detail: { requestId: detail.requestId, videoId: detail.videoId, cues }
     })),

@@ -666,6 +666,27 @@ function App() {
               <a className="dictionary-link" href={`https://www.ldoceonline.com/search/?${new URLSearchParams({ q: lookup.word })}`}
                 target="_blank" rel="noopener noreferrer">在朗文查看 <span aria-hidden="true">↗</span></a>
             </div>
+            {offlineConfigured && (
+              <section className="dictionary-source" aria-labelledby="offline-heading">
+                <h2 id="offline-heading">离线词典</h2>
+                {playbackError && <div className="audio-error">{playbackError}</div>}
+                {!result ? <div className="status">正在查询离线词典…</div>
+                  : result.error ? <div className="status error">{result.error}</div>
+                  : result.definition ? (
+                    <DictionaryDefinition
+                      html={result.definition}
+                      css={result.css}
+                      onSearch={(entry) => void search(entry)}
+                      onPlaybackError={setPlaybackError}
+                    />
+                  ) : <div className="status empty">离线词典中没有找到完全匹配的词条。</div>}
+                {!!result?.suggestions.length && (
+                  <div className="suggestions"><div className="brand">相关词条</div>{result.suggestions.map((word) => (
+                    <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
+                  ))}</div>
+                )}
+              </section>
+            )}
             <section className="dictionary-source" aria-labelledby="wordnet-heading">
               <h2 id="wordnet-heading">{WORDNET_NAME}</h2>
               <div aria-live="polite">
@@ -695,27 +716,6 @@ function App() {
                 <a href={PRINCETON_LICENSE} target="_blank" rel="noopener noreferrer">Princeton WordNet 许可原文</a>
               </details>
             </section>
-            {offlineConfigured && (
-              <section className="dictionary-source" aria-labelledby="offline-heading">
-                <h2 id="offline-heading">离线词典</h2>
-                {playbackError && <div className="audio-error">{playbackError}</div>}
-                {!result ? <div className="status">正在查询离线词典…</div>
-                  : result.error ? <div className="status error">{result.error}</div>
-                  : result.definition ? (
-                    <DictionaryDefinition
-                      html={result.definition}
-                      css={result.css}
-                      onSearch={(entry) => void search(entry)}
-                      onPlaybackError={setPlaybackError}
-                    />
-                  ) : <div className="status empty">离线词典中没有找到完全匹配的词条。</div>}
-                {!!result?.suggestions.length && (
-                  <div className="suggestions"><div className="brand">相关词条</div>{result.suggestions.map((word) => (
-                    <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
-                  ))}</div>
-                )}
-              </section>
-            )}
           </>
         ) : <div className="status">在 YouTube 字幕中双击英文单词，即可在这里查询。</div>}
       </main>

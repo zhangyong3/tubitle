@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowRight, BookOpen } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 import { Link } from '@/core/i18n/navigation';
 import { m } from '@/paraglide/messages.js';
@@ -18,14 +18,6 @@ export function Hero() {
           {m['tubitle.hero.cta']()}
           <ArrowRight size={18} />
         </Link>
-        <a href="#preview" className="tt-text-link">
-          {m['tubitle.hero.secondary']()}
-          <ArrowDown size={16} />
-        </a>
-        <p className="tt-fine">
-          <BookOpen size={15} />
-          {m['tubitle.hero.note']()}
-        </p>
       </div>
       <LessonPreview />
     </section>

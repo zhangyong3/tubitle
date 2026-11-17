@@ -1,5 +1,10 @@
 import type { CaptionTrack } from "./types";
 
+export function selectSourceTrack(tracks: CaptionTrack[]): CaptionTrack | undefined {
+  const english = tracks.filter((track) => /^en(?:-|$)/i.test(track.languageCode));
+  return english.find((track) => track.kind !== "asr") ?? english[0] ?? tracks.find((track) => track.kind === "asr") ?? tracks[0];
+}
+
 export type RawCaptionTrack = {
   baseUrl?: string;
   languageCode?: string;

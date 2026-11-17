@@ -11,6 +11,7 @@ import { useConfirm } from '@/hooks/use-confirm';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LearningPlayer, type LearningPlayerHandle } from './learning-player';
+import { WordNetDefinition } from './wordnet-definition';
 
 export function LearningLibrary() {
   const { data: session } = useSession();
@@ -97,7 +98,7 @@ export function LearningLibrary() {
           {query.isPending ? <p className="tt-study-message" role="status">{m['tubitle.library.loading']()}</p> : query.isError ? <div className="tt-study-message" role="alert"><p>{m['tubitle.library.error']()}</p><Button variant="outline" onClick={() => void query.refetch()}>{m['tubitle.library.retry']()}</Button></div> : !items.length ? <div className="tt-study-message"><BookOpen size={24} /><p>{search || kind || status ? m['tubitle.library.noResults']() : m['tubitle.library.empty']()}</p><p>{m['tubitle.library.emptyText']()}</p></div> : groups.map(([date, records]) => <details className="tt-study-date" key={date} open>
             <summary><ChevronDown size={14} /><time dateTime={date}>{new Intl.DateTimeFormat(getLocale(), { dateStyle: 'medium' }).format(new Date(records[0].createdAt))}</time><span>{records.length}</span></summary>
             <ul>{records.map(item => <li key={item.id}><button type="button" className="tt-study-entry" aria-current={active?.id === item.id ? 'true' : undefined} onClick={() => select(item)}>
-              <span className={`tt-study-kind tt-study-kind-${item.kind}`}>{item.kind === 'word' ? m['tubitle.library.word']() : m['tubitle.library.sentence']()}</span><span className="tt-study-entry-text" lang="en">{item.text}</span><span className="tt-study-entry-time">{formatVideoTime(item.startSeconds)}</span>
+              <span className="tt-study-entry-text" lang="en" title={item.text}>{item.text}</span><time className="tt-study-entry-time" dateTime={item.createdAt} title={new Intl.DateTimeFormat(getLocale(), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.createdAt))}>{new Intl.DateTimeFormat(getLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(item.createdAt))}</time>
             </button></li>)}</ul>
           </details>)}
           {query.hasNextPage && <Button className="tt-study-more" variant="ghost" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? m['tubitle.library.loading']() : m['tubitle.library.loadMore']()}</Button>}
@@ -128,7 +129,8 @@ export function LearningLibrary() {
         {active.analysis && <section className="tt-study-explanation"><h3>{m['tubitle.library.analysis']()}</h3><div>{active.analysis}</div></section>}
         {active.context && <section className="tt-study-explanation"><h3>{m['tubitle.library.contextLabel']()}</h3><p>{active.context}</p></section>}
         {active.note && <section className="tt-study-explanation"><h3>{m['tubitle.library.noteLabel']()}</h3><p>{active.note}</p></section>}
-        {!active.translation && !active.analysis && <p className="tt-study-message">{m['tubitle.library.noExplanation']()}</p>}
+        {active.kind === 'word' && <WordNetDefinition key={active.text} word={active.text} />}
+        {active.kind !== 'word' && !active.translation && !active.analysis && <p className="tt-study-message">{m['tubitle.library.noExplanation']()}</p>}
       </article> : <div className="tt-study-no-selection"><BookOpen size={30} /><h2>{m['tubitle.library.selectRecord']()}</h2><p>{m['tubitle.library.emptyText']()}</p></div>}
     </section>
     {dialog}
