@@ -27,11 +27,15 @@ function loadPlayerApi() {
   });
   return apiPromise;
 }
-export interface LearningPlayerHandle { pause(): void }
-export function LearningPlayer({ videoId, seconds, playRequest, ref }: { videoId: string; seconds: number; playRequest: number; ref?: Ref<LearningPlayerHandle> }) {
+export interface LearningPlayerHandle { toggle(): void; changeRate(direction: -1 | 0 | 1): void }
+export function LearningPlayer({ videoId, seconds, playRequest, ref, onPlayingChange, onRateChange }: { videoId: string; seconds: number; playRequest: number; ref?: Ref<LearningPlayerHandle>; onPlayingChange: (playing: boolean) => void; onRateChange: (rate: number) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const playback = useRef<StudyPlayback | null>(null);
-  useImperativeHandle(ref, () => ({ pause: () => playback.current?.pause() }), []);
+  useImperativeHandle(ref, () => ({ toggle: () => playback.current?.toggle(), changeRate: direction => playback.current?.changeRate(direction) }), []);
+  const rateChange = useRef(onRateChange);
+  rateChange.current = onRateChange;
+  const playingChange = useRef(onPlayingChange);
+  playingChange.current = onPlayingChange;
   const latest = useRef({ videoId, seconds, playRequest });
   latest.current = { videoId, seconds, playRequest };
   const [error, setError] = useState(false);
@@ -43,6 +47,8 @@ export function LearningPlayer({ videoId, seconds, playRequest, ref }: { videoId
     let cancelled = false;
     let player: StudyPlayer | undefined;
     setError(false); setReady(false);
+    playingChange.current(false);
+    rateChange.current(1);
     const element = document.createElement('div');
     host.current?.append(element);
     void loadPlayerApi().then(api => {
@@ -54,11 +60,18 @@ export function LearningPlayer({ videoId, seconds, playRequest, ref }: { videoId
           onReady: (event: { target: StudyPlayer }) => {
             if (cancelled) return;
             playback.current = new StudyPlayback(event.target);
+            rateChange.current(event.target.getPlaybackRate());
             const current = latest.current;
             playback.current.select(current.videoId, current.seconds, current.playRequest > 0);
             setReady(true);
           },
-          onError: () => { if (!cancelled) setError(true); },
+          onStateChange: (event: { data: number }) => {
+            if (!cancelled) playingChange.current(event.data === 1 || event.data === 3);
+          },
+          onPlaybackRateChange: (event: { data: number }) => {
+            if (!cancelled) rateChange.current(event.data);
+          },
+          onError: () => { if (!cancelled) { setError(true); playingChange.current(false); } },
         },
       });
     }).catch(() => { if (!cancelled) setError(true); });

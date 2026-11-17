@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Download, Pause, RotateCcw, Search, Trash2 } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Download, Pause, Play, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSession } from '@/core/auth/client';
 import { apiDelete, apiGet, apiPatch } from '@/lib/api-client';
@@ -21,6 +21,8 @@ export function LearningLibrary() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [playRequest, setPlayRequest] = useState(0);
   const playerRef = useRef<LearningPlayerHandle>(null);
+  const [playing, setPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const { confirm, dialog } = useConfirm();
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -104,12 +106,18 @@ export function LearningLibrary() {
       <p className="tt-study-privacy">{m['tubitle.library.privacy']()}</p>
     </aside>
     <section className="tt-study-main" id="study-detail" aria-label={m['tubitle.library.review']()}>
-      <LearningPlayer ref={playerRef} videoId={active?.videoId || ''} seconds={active?.startSeconds || 0} playRequest={playRequest} />
+      <LearningPlayer ref={playerRef} videoId={active?.videoId || ''} seconds={active?.startSeconds || 0} playRequest={playRequest} onPlayingChange={setPlaying} onRateChange={setPlaybackRate} />
       <div className="tt-study-controls" aria-label={m['tubitle.library.playback']()}>
         <Button variant="outline" disabled={activeIndex <= 0} onClick={() => select(items[activeIndex - 1])}><ChevronLeft size={16} />{m['tubitle.library.previousRecord']()}</Button>
         <Button variant="outline" disabled={!active || (activeIndex === items.length - 1 && !query.hasNextPage) || query.isFetchingNextPage} onClick={() => void next()}>{m['tubitle.library.nextRecord']()}<ChevronRight size={16} /></Button>
-        <Button variant="ghost" disabled={!active?.videoId} onClick={() => playerRef.current?.pause()}><Pause size={15} />{m['tubitle.library.pause']()}</Button>
+        <Button variant="ghost" disabled={!active?.videoId} onClick={() => playerRef.current?.toggle()}>{playing ? <Pause size={15} /> : <Play size={15} />}{playing ? m['tubitle.library.pause']() : m['tubitle.library.play']()}</Button>
         <Button variant="ghost" disabled={!active?.videoId} onClick={() => setPlayRequest(value => value + 1)}><RotateCcw size={15} />{m['tubitle.library.replay']()}</Button>
+        <div className="tt-study-speed" role="group" aria-label={m['tubitle.library.speed']()}>
+          <Button variant="ghost" disabled={!active?.videoId} onClick={() => playerRef.current?.changeRate(-1)}>{m['tubitle.library.slower']()}</Button>
+          <Button variant="ghost" disabled={!active?.videoId} onClick={() => playerRef.current?.changeRate(0)}>{m['tubitle.library.normalSpeed']()}</Button>
+          <Button variant="ghost" disabled={!active?.videoId} onClick={() => playerRef.current?.changeRate(1)}>{m['tubitle.library.faster']()}</Button>
+          <span className="tt-study-rate" role="status">{playbackRate}×</span>
+        </div>
         <span className="tt-study-position">{active ? `${activeIndex + 1} / ${query.data?.pages[0].total}` : ''}</span>
       </div>
       {active ? <article className="tt-study-detail">

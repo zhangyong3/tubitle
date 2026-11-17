@@ -1424,6 +1424,11 @@
   "tubitle.library.meaning": "Meaning",
   "tubitle.library.noExplanation": "No saved meaning or analysis for this record. Revisit the video for context.",
   "tubitle.library.pause": "Pause",
+  "tubitle.library.play": "Play",
+  "tubitle.library.speed": "Playback speed",
+  "tubitle.library.slower": "Slower",
+  "tubitle.library.normalSpeed": "Normal",
+  "tubitle.library.faster": "Faster",
   "common.sidebar.collapse": "Collapse sidebar",
   "common.sidebar.expand": "Expand sidebar"
 }

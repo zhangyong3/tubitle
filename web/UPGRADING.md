@@ -6,6 +6,10 @@ The boundary arrow now keeps a stable hit area while pressed and follows the sid
 
 ## 2026-11-17: Learning review workspace
 
+The playback control now toggles play/pause at the current position and follows YouTube state events, including changes made inside the iframe. No configuration change is required.
+
+Slower/Normal/Faster controls appear after Replay. They step through the current video's supported playback rates, restore 1× and display the actual rate reported by YouTube without seeking or reloading the iframe.
+
 The learning library now groups records by local calendar date in a searchable left column and displays a persistent YouTube iframe with the selected record in the right column. Selection, previous/next and replay use the IFrame Player API without navigating or recreating the player. Older records load incrementally through the existing paginated API. No schema or configuration migration is needed.
 
 ## 2026-11-16 — Admin entry permission

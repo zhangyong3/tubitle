@@ -1424,6 +1424,11 @@
   "tubitle.library.meaning": "释义",
   "tubitle.library.noExplanation": "这条记录还没有保存释义或解析，可先回看视频。",
   "tubitle.library.pause": "暂停",
+  "tubitle.library.play": "播放",
+  "tubitle.library.speed": "播放速度",
+  "tubitle.library.slower": "调慢",
+  "tubitle.library.normalSpeed": "正常",
+  "tubitle.library.faster": "调快",
   "common.sidebar.collapse": "折叠侧栏",
   "common.sidebar.expand": "展开侧栏"
 }
