@@ -51,25 +51,29 @@ function unpackTrueType(woff, file) {
 export async function copyPdfFontAssets(appDirectory, fontDirectory) {
   // Only ship regular faces; the exporter loads the subsets it needs locally.
   const require = createRequire(resolve(appDirectory, "package.json"));
-  const fontCssPath = require.resolve("@fontsource/noto-sans-sc/400.css");
-  const fontRoot = dirname(fontCssPath);
-  const fontCss = await readFile(fontCssPath, "utf8");
-  // Fontkit cannot inflate one WOFF cmap and miscopies glyphs from WOFF2 when subsetting.
-  // Embed raw TrueType tables so the PDF keeps the original glyph outlines.
-  const faces = Array.from(fontCss.matchAll(/@font-face\s*\{([^}]+)\}/g), ([, block]) => ({
-    source: block.match(/url\(\.\/files\/([^/)]+\.woff)\)/)?.[1],
-    ranges: block.match(/unicode-range:\s*([^;]+)/)?.[1]
-  })).filter((face) => face.source && face.ranges);
-  if (!faces.length) throw new Error("Missing Unicode ranges for the PDF font");
+  const families = ["noto-sans", "noto-sans-sc", "noto-sans-jp", "noto-sans-kr", "noto-sans-arabic", "noto-sans-thai"];
   await mkdir(fontDirectory, { recursive: true });
-  await Promise.all([
-    ...faces.map(async ({ source }) => {
+  const faces = [];
+  for (const family of families) {
+    const fontCssPath = require.resolve(`@fontsource/${family}/400.css`);
+    const fontRoot = dirname(fontCssPath);
+    const fontCss = await readFile(fontCssPath, "utf8");
+    // Embed raw TrueType tables: WOFF2 subsetting can lose glyph outlines.
+    const familyFaces = Array.from(fontCss.matchAll(/@font-face\s*\{([^}]+)\}/g), ([, block]) => ({
+      source: block.match(/url\(\.\/files\/([^/)]+\.woff)\)/)?.[1],
+      ranges: block.match(/unicode-range:\s*([^;]+)/)?.[1],
+      family
+    })).filter((face) => face.source && face.ranges);
+    if (!familyFaces.length) throw new Error(`Missing Unicode ranges for PDF font: ${family}`);
+    await Promise.all(familyFaces.map(async ({ source }) => {
       const bytes = await readFile(resolve(fontRoot, "files", source));
       await writeFile(resolve(fontDirectory, source.replace(/\.woff$/, ".ttf")), unpackTrueType(bytes, source));
-    }),
-    cp(resolve(fontRoot, "LICENSE"), resolve(fontDirectory, "LICENSE")),
-    writeFile(resolve(fontDirectory, "faces.json"), JSON.stringify(faces.map(({ source, ranges }) => ({
-      file: source.replace(/\.woff$/, ".ttf"), ranges
-    }))))
+    }));
+    await cp(resolve(fontRoot, "LICENSE"), resolve(fontDirectory, `${family}-LICENSE`));
+    faces.push(...familyFaces.map(({ source, ranges, family }) => ({ file: source.replace(/\.woff$/, ".ttf"), ranges, family })));
+  }
+  await Promise.all([
+    cp(resolve(appDirectory, "public/icons/icon-128.png"), resolve(fontDirectory, "logo.png")),
+    writeFile(resolve(fontDirectory, "faces.json"), JSON.stringify(faces))
   ]);
 }

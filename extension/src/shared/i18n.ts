@@ -1,6 +1,6 @@
 import { catalogs } from "./locales/catalogs";
 
-import { resolveUiLanguage } from "./ui-language";
+import { resolveUiLanguage, type UiLanguage } from "./ui-language";
 export { UI_LANGUAGES, resolveUiLanguage, type UiLanguage } from "./ui-language";
 let language = resolveUiLanguage(typeof navigator === "undefined" ? "en" : navigator.language);
 const subscribers = new Set<() => void>();
@@ -44,7 +44,7 @@ const templateMatchers = templateSources.map((source) => ({
 }));
 
 /** Chinese source keys remain stable; only known product messages are translated. */
-export function t(source: string, ...values: Array<string | number>): string {
+export function translateForLanguage(locale: UiLanguage, source: string, ...values: Array<string | number>): string {
   let key = source;
   if (values.length === 0 && !catalogs.en![key]) {
     for (const template of templateMatchers) {
@@ -58,8 +58,12 @@ export function t(source: string, ...values: Array<string | number>): string {
   // Service errors may nest another known error or provider label. Do not
   // transform parameters in regular messages, where they can be user content.
   if (/(?:错误|失败|无法下载)/.test(key)) {
-    values = values.map((value) => typeof value === "string" && catalogs.en![value] ? t(value) : value);
+    values = values.map((value) => typeof value === "string" && catalogs.en![value] ? translateForLanguage(locale, value) : value);
   }
-  const translated = language === "zh-CN" ? key : catalogs[language]?.[key] || catalogs.en![key] || key;
+  const translated = locale === "zh-CN" ? key : catalogs[locale]?.[key] || catalogs.en![key] || key;
   return translated.replace(/\{(\d+)\}/g, (token, index: string) => String(values[Number(index)] ?? token));
+}
+
+export function t(source: string, ...values: Array<string | number>): string {
+  return translateForLanguage(language, source, ...values);
 }

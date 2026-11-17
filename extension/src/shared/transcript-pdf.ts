@@ -1,9 +1,13 @@
+import bidiFactory from "bidi-js";
+import { translateForLanguage } from "./i18n";
+import { resolveUiLanguage } from "./ui-language";
+import { getSettings } from "./settings";
 import fontkit from "@pdf-lib/fontkit";
-import { degrees, PDFDocument, type PDFFont, type PDFPage, rgb } from "pdf-lib";
+import { Cache, CustomFontEmbedder, degrees, PDFDocument, PDFFont, type PDFPage, rgb } from "pdf-lib";
 import { formatCaptionTime, type TranscriptNoteRow } from "./transcript-notes";
 import { PRINCETON_LICENSE, PRINCETON_NOTICE, WORDNET_COPYRIGHT, WORDNET_LICENSE, WORDNET_NAME, WORDNET_SITE } from "./wordnet";
 
-interface FontFace { file: string; ranges: string }
+interface FontFace { file: string; ranges: string; family?: string }
 interface TextPart { text: string; highlight?: boolean }
 interface Run extends TextPart { font: PDFFont; width: number }
 interface NoteParagraph { text: string; kind?: "heading" | "example" }
@@ -27,7 +31,7 @@ const LINE_HEIGHT = 15;
 const NOTE_GAP = 11;
 const EXAMPLE_INSET = 8;
 const EXAMPLE_SLANT_ALLOWANCE = 2;
-const LABELS = "TUBITLE 字幕学习笔记 英文字幕 学习旁批 句子解析 词典 续 ? 0123456789:/#.-";
+const LABELS = "TUBITLE ? 0123456789:/#.-";
 
 const ink = rgb(.12, .16, .23);
 const muted = rgb(.31, .36, .44);
@@ -36,31 +40,56 @@ const exampleColor = rgb(.08, .38, .36);
 const exampleSlant = degrees(12);
 const rule = rgb(.85, .88, .92);
 const noteRule = rgb(.76, .81, .86);
+const bidi = bidiFactory();
 const highlightColor = rgb(1, .90, .52);
 
-async function prepareFonts(pdf: PDFDocument, text: string, readAsset: (name: string) => Promise<ArrayBuffer>) {
+// Arabic joining forms are not all reachable through the font's cmap. Include
+// the shaped glyphs in PDF width and Unicode tables, and retain the full font
+// because fontkit subsetting can drop components of those joining forms.
+class ShapedFontEmbedder extends CustomFontEmbedder {
+  private readonly used = new Map<number, ReturnType<typeof this.font.layout>["glyphs"][number]>();
+  constructor(bytes: Uint8Array) {
+    super(fontkit.create(bytes), bytes);
+    this.glyphCache = Cache.populatedBy(() => [...this.used.values()].sort((a, b) => a.id - b.id));
+  }
+  override encodeText(text: string) {
+    for (const glyph of this.font.layout(text, this.fontFeatures).glyphs) this.used.set(glyph.id, glyph);
+    this.glyphCache.invalidate();
+    return super.encodeText(text);
+  }
+}
+
+async function prepareFonts(pdf: PDFDocument, text: string, readAsset: (name: string) => Promise<ArrayBuffer>, language: string) {
   const faces = JSON.parse(new TextDecoder().decode(await readAsset("faces.json"))) as FontFace[];
+  const preferred = language === "ja" ? "noto-sans-jp" : language === "ko" ? "noto-sans-kr" : language.startsWith("zh") ? "noto-sans-sc" : "noto-sans";
+  faces.sort((a, b) => Number(b.family === preferred) - Number(a.family === preferred));
   const codePoints = new Set(Array.from(text, (char) => char.codePointAt(0)!));
   const assignments = new Map<number, PDFFont>();
+  const shapedFonts: PDFFont[] = [];
   pdf.registerFontkit(fontkit);
   // Unicode ranges tell us which regular font subsets to open; no fonts are fetched from the network.
-  await Promise.all(faces.map(async (face) => {
+  for (const face of faces) {
     const ranges = face.ranges.split(",").map((part) => {
       const [left, right] = part.trim().slice(2).split("-");
       return [Number.parseInt(left!, 16), Number.parseInt(right ?? left!, 16)] as const;
     });
-    const needed = [...codePoints].filter((code) => ranges.some(([start, end]) => code >= start && code <= end));
-    if (!needed.length) return;
-    const font = await pdf.embedFont(await readAsset(face.file), { subset: true, features: { liga: false } });
+    const needed = [...codePoints].filter((code) => !assignments.has(code) && ranges.some(([start, end]) => code >= start && code <= end));
+    if (!needed.length) continue;
+    const bytes = new Uint8Array(await readAsset(face.file));
+    const font = face.family === "noto-sans-arabic"
+      ? PDFFont.of(pdf.context.nextRef(), pdf, new ShapedFontEmbedder(bytes))
+      : await pdf.embedFont(bytes, { subset: true });
+    if (face.family === "noto-sans-arabic") shapedFonts.push(font);
     const covered = new Set(font.getCharacterSet());
     for (const code of needed) if (covered.has(code)) assignments.set(code, font);
-  }));
+  }
   const fallback = assignments.get(63);
   if (!fallback) throw new Error("缺少 PDF 字体");
-  return (char: string) => {
+  const glyph = (char: string) => {
     const font = assignments.get(char.codePointAt(0)!);
     return { char: font ? char : "?", font: font ?? fallback };
   };
+  return Object.assign(glyph, { flush: () => Promise.all(shapedFonts.map((font) => font.embed())) });
 }
 
 function getSourceParts(row: TranscriptNoteRow): TextPart[] {
@@ -75,11 +104,11 @@ function getSourceParts(row: TranscriptNoteRow): TextPart[] {
   return parts;
 }
 
-function getNoteSections(row: TranscriptNoteRow): NoteSection[] {
+function getNoteSections(row: TranscriptNoteRow, translate: (text: string) => string): NoteSection[] {
   const sections: NoteSection[] = [];
   if (row.translation) sections.push({ paragraphs: [{ text: row.translation }] });
   if (row.explanation) sections.push({ paragraphs: [
-    { text: "句子解析", kind: "heading" }, { text: row.explanation }
+    { text: translate("句子解析"), kind: "heading" }, { text: row.explanation }
   ] });
   for (const { word, senses } of row.words) {
     sections.push({
@@ -119,46 +148,75 @@ function fitNotes(lines: NoteLine[], start: number, available: number, freshPage
 export async function createTranscriptPdf(
   title: string,
   rows: TranscriptNoteRow[],
-  readAsset: (name: string) => Promise<ArrayBuffer>
+  readAsset: (name: string) => Promise<ArrayBuffer>,
+  targetLanguage = "zh"
 ): Promise<Uint8Array<ArrayBuffer>> {
+  const language = resolveUiLanguage(targetLanguage);
+  const translate = (text: string, ...values: Array<string | number>) => translateForLanguage(language, text, ...values);
+  const labels = {
+    title: translate("字幕学习笔记"), source: translate("英文字幕"), notes: translate("学习旁批"), continued: translate("续")
+  };
   const pdf = await PDFDocument.create();
+  pdf.setLanguage(language);
+  const logo = await pdf.embedPng(await readAsset("logo.png"));
   pdf.setTitle(title);
   pdf.setCreator("Tubitle");
 
   const hasWordNet = rows.some((row) => row.words.length > 0);
-  const creditHeading = "词义来源与版权";
-  const creditFooter = `词义来源：${WORDNET_NAME} · CC BY 4.0`;
+  const creditHeading = translate("词义来源与版权");
+  const creditFooter = translate("词义来源：{0} · CC BY 4.0", WORDNET_NAME);
   const credit = [
     `${WORDNET_NAME} (${WORDNET_SITE}) ${WORDNET_COPYRIGHT}`,
     `CC BY 4.0: ${WORDNET_LICENSE}`,
-    "节选释义和例句，重新排版。",
+    translate("节选释义和例句，重新排版。"),
     `Princeton WordNet license: ${PRINCETON_LICENSE}`,
     PRINCETON_NOTICE
   ].join("\n");
-  const noteSections = rows.map(getNoteSections);
-  const glyph = await prepareFonts(pdf, [LABELS, title, hasWordNet ? creditHeading + creditFooter + credit : "",
+  const noteSections = rows.map((row) => getNoteSections(row, translate));
+  const glyph = await prepareFonts(pdf, [LABELS, ...Object.values(labels), title, hasWordNet ? creditHeading + creditFooter + credit : "",
     ...rows.map((row) => row.text),
     ...noteSections.flatMap((sections) => sections.flatMap(({ paragraphs }) => paragraphs.map(({ text }) => text)))
-  ].join("\n"), readAsset);
-  const widths = new Map<number, Map<string, number>>();
+  ].join("\n"), readAsset, language);
   function shape(text: string, size: number, highlight?: boolean): Run[] {
-    let sizeWidths = widths.get(size);
-    if (!sizeWidths) widths.set(size, sizeWidths = new Map());
     const runs: Run[] = [];
     for (const codePoint of text) {
       const { char, font } = glyph(codePoint);
-      let width = sizeWidths.get(char);
-      if (width === undefined) {
-        width = font.widthOfTextAtSize(char, size);
-        sizeWidths.set(char, width);
-      }
       const previous = runs.at(-1);
-      if (previous?.font === font) {
-        previous.text += char;
-        previous.width += width;
-      } else runs.push({ text: char, font, width, highlight });
+      if (previous?.font === font) previous.text += char;
+      else runs.push({ text: char, font, width: 0, highlight });
     }
+    for (const run of runs) run.width = run.font.widthOfTextAtSize(run.text, size);
     return runs;
+  }
+
+  // Keep logical text inside each shaped Arabic run, but position runs in visual
+  // order so mixed Latin names, spaces and numbers remain readable.
+  function visualRuns(line: Run[], size: number): Run[] {
+    const text = line.map((run) => run.text).join("");
+    if (!/\p{Script=Arabic}/u.test(text)) return line;
+    const levels = bidi.getEmbeddingLevels(text);
+    const indices = Array.from({ length: text.length }, (_, index) => index);
+    for (const [start, end] of bidi.getReorderSegments(text, levels)) {
+      indices.splice(start, end - start + 1, ...indices.slice(start, end + 1).reverse());
+    }
+    const positions = new Map(indices.map((logical, visual) => [logical, visual]));
+    const mirrored = bidi.getMirroredCharactersMap(text, levels);
+    const chunks: Array<Run & { position: number }> = [];
+    let offset = 0;
+    for (const run of line) {
+      let start = 0;
+      while (start < run.text.length) {
+        let end = start + 1;
+        while (end < run.text.length && levels.levels[offset + end] === levels.levels[offset + start]) end++;
+        const logical = run.text.slice(start, end).split("").map((char, index) => mirrored.get(offset + start + index) || char).join("");
+        let position = Infinity;
+        for (let index = start; index < end; index++) position = Math.min(position, positions.get(offset + index)!);
+        chunks.push({ ...run, text: logical, width: run.font.widthOfTextAtSize(logical, size), position });
+        start = end;
+      }
+      offset += run.text.length;
+    }
+    return chunks.sort((a, b) => a.position - b.position);
   }
 
   function wrap(parts: TextPart[], width: number, size: number): Run[][] {
@@ -207,8 +265,12 @@ export async function createTranscriptPdf(
     return lines;
   }
 
-  function draw(page: PDFPage, line: Run[], x: number, y: number, size: number, color = ink, italic = false) {
-    for (const run of line) {
+  function draw(page: PDFPage, line: Run[], x: number, y: number, size: number, color = ink, italic = false, alignWidth?: number) {
+    const ordered = visualRuns(line, size);
+    if (alignWidth && bidi.getEmbeddingLevels(line.map((run) => run.text).join("")).paragraphs[0]?.level === 1) {
+      x += Math.max(0, alignWidth - ordered.reduce((total, run) => total + run.width, 0));
+    }
+    for (const run of ordered) {
       if (run.highlight) page.drawRectangle({ x, y: y - 2.5, width: run.width, height: size + 4, color: highlightColor });
       // pdf-lib's ySkew shears glyphs horizontally while keeping the baseline level.
       page.drawText(run.text, { x, y, size, color, font: run.font, ySkew: italic ? exampleSlant : undefined });
@@ -222,15 +284,18 @@ export async function createTranscriptPdf(
   let page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   let y = bodyTop;
   const rowGap = 10;
-  function newPage(target = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT])) {
+  function newPage(target = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]), columns = true) {
     page = target;
     pageWords.clear();
     y = bodyTop;
-    draw(page, shape("TUBITLE  /  字幕学习笔记", 9), MARGIN, PAGE_HEIGHT - 39, 9, accent);
+    page.drawImage(logo, { x: MARGIN, y: PAGE_HEIGHT - 42, width: 16, height: 16 });
+    draw(page, shape(`TUBITLE  /  ${labels.title}`, 9), MARGIN + 22, PAGE_HEIGHT - 39, 9, accent);
     titleLines.forEach((line, index) => draw(page, line, MARGIN, PAGE_HEIGHT - 66 - 21 * index, 17));
     page.drawLine({ start: { x: MARGIN, y: y + 35 }, end: { x: PAGE_WIDTH - MARGIN, y: y + 35 }, color: accent, thickness: 1 });
-    draw(page, shape("英文字幕", 9), BODY_X, y + 20, 9, accent);
-    draw(page, shape("学习旁批", 9), NOTES_X, y + 20, 9, accent);
+    if (columns) {
+      draw(page, shape(labels.source, 9), BODY_X, y + 20, 9, accent, false, BODY_WIDTH);
+      draw(page, shape(labels.notes, 9), NOTES_X, y + 20, 9, accent, false, NOTES_WIDTH);
+    }
   }
 
   newPage(page);
@@ -260,7 +325,13 @@ export async function createTranscriptPdf(
       const noteFit = fitNotes(notes, noteOffset, available, y === bodyTop);
       const rowTop = y + 12;
       draw(page, shape(formatCaptionTime(row.startMs), 8), MARGIN, y, 8, muted);
-      draw(page, shape(continued ? `#${index + 1} 续` : `#${index + 1}`, 8), MARGIN, y - 11, 8, muted);
+      draw(page, shape(`#${index + 1}`, 8), MARGIN, y - 11, 8, muted);
+      if (continued) {
+        const gutterWidth = BODY_X - MARGIN - 8;
+        const measured = shape(labels.continued, 7).reduce((total, run) => total + run.width, 0);
+        const size = Math.min(7, 7 * gutterWidth / measured);
+        draw(page, shape(labels.continued, size), MARGIN, y - 21, size, muted);
+      }
       for (let i = sourceOffset; i < sourceEnd; i++) {
         draw(page, source[i]!, BODY_X, y - (i - sourceOffset) * LINE_HEIGHT, 11);
       }
@@ -273,7 +344,8 @@ export async function createTranscriptPdf(
           noteY -= NOTE_GAP;
         }
         draw(page, runs, NOTES_X + (kind === "example" ? EXAMPLE_INSET : 0), noteY, 9.5,
-          kind === "example" ? exampleColor : kind === "heading" ? accent : muted, kind === "example");
+          kind === "example" ? exampleColor : kind === "heading" ? accent : muted, kind === "example",
+          NOTES_WIDTH - (kind === "example" ? EXAMPLE_INSET : 0));
         noteY -= LINE_HEIGHT;
         if (wordKey) pageWords.add(wordKey);
       }
@@ -291,8 +363,7 @@ export async function createTranscriptPdf(
     const lines = wrap([{ text: credit }], PAGE_WIDTH - MARGIN * 2, 8);
     const height = 22 + lines.length * 11;
     if (y - height < FOOTER) {
-      page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      y = PAGE_HEIGHT - 54;
+      newPage(undefined, false);
     }
     draw(page, shape(creditHeading, 10), MARGIN, y, 10, accent);
     lines.forEach((line, index) => draw(page, line, MARGIN, y - 18 - index * 11, 8, muted));
@@ -303,19 +374,21 @@ export async function createTranscriptPdf(
     if (hasWordNet) draw(item, shape(creditFooter, 8), MARGIN, 28, 8, muted);
     draw(item, shape(`${index + 1} / ${pages.length}`, 8), PAGE_WIDTH - MARGIN - 35, 28, 8, muted);
   });
+  await glyph.flush();
   return new Uint8Array(await pdf.save());
 }
 
 export async function downloadTranscriptPdf(title: string, rows: TranscriptNoteRow[]): Promise<void> {
+  const settings = await getSettings();
   const bytes = await createTranscriptPdf(title, rows, async (name) => {
     const response = await fetch(chrome.runtime.getURL(`pdf-fonts/${name}`));
     if (!response.ok) throw new Error("无法读取 PDF 字体");
     return response.arrayBuffer();
-  });
+  }, settings.targetLanguage);
   const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${title.replace(/[\\/:*?"<>|\u0000-\u001F]/g, "_").slice(0, 100).trim() || "Tubitle"}-字幕.pdf`;
+  link.download = `${title.replace(/[\\/:*?"<>|\u0000-\u001F]/g, "_").slice(0, 100).trim() || "Tubitle"} - tubitle.pdf`;
   document.body.append(link);
   link.click();
   link.remove();
