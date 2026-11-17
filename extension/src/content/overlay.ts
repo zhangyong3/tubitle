@@ -1,3 +1,4 @@
+import { t } from "../shared/i18n";
 import type {
   CaptionSentence,
   SubtitleAppearance,
@@ -24,7 +25,7 @@ const STYLES = `
   *{box-sizing:border-box}.panel{position:relative;display:none;pointer-events:auto;text-align:center;color:#fff;filter:drop-shadow(0 3px 14px rgba(0,0,0,.72))}.panel.visible{display:block}
   .caption{display:none;position:relative;flex-direction:column;align-items:center;gap:5px;max-width:100%;padding:10px 16px 11px;border-radius:12px;background:rgba(10,11,15,.46);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);cursor:grab;touch-action:none}.caption.visible{display:inline-flex}.caption.dragging{cursor:grabbing}
   .english,.chinese{max-width:100%;line-height:1.42;text-wrap:balance;overflow-wrap:anywhere;cursor:default}.english{font-size:var(--tt-english-size,19px);font-weight:680;letter-spacing:.01em;color:var(--tt-english-color,#fff)}.chinese{font-size:var(--tt-chinese-size,20px);font-weight:520;color:var(--tt-chinese-color,#ffe58f)}.chinese.hidden{display:none}
-  .word{position:relative;border-radius:4px;cursor:pointer;transition:background .12s,color .12s;user-select:none}.word:hover{background:#7c5cff;color:#fff}.word.copied::after,.word.copy-error::after{content:"已复制";position:absolute;z-index:4;left:50%;top:-8px;transform:translate(-50%,-100%);border:1px solid rgba(255,255,255,.22);border-radius:7px;padding:4px 7px;background:#7c5cff;color:#fff;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.35)}.word.copy-error::after{content:"复制失败";background:#b83a4b}
+  .word{position:relative;border-radius:4px;cursor:pointer;transition:background .12s,color .12s;user-select:none}.word:hover{background:#7c5cff;color:#fff}.word.copied::after,.word.copy-error::after{content:attr(data-copy-success);position:absolute;z-index:4;left:50%;top:-8px;transform:translate(-50%,-100%);border:1px solid rgba(255,255,255,.22);border-radius:7px;padding:4px 7px;background:#7c5cff;color:#fff;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.35)}.word.copy-error::after{content:attr(data-copy-error);background:#b83a4b}
   .analyze-action{position:absolute;right:7px;bottom:7px;display:grid;width:32px;height:32px;place-items:center;border:1px solid rgba(255,255,255,.22);border-radius:9px;padding:0;background:rgba(20,18,31,.92);color:#d8ceff;opacity:0;visibility:hidden;pointer-events:none;transform:translate(3px,3px) scale(.88);cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.38);transition:opacity .15s,transform .15s,visibility .15s,background .15s,color .15s}.caption:hover .analyze-action,.analyze-action:focus-visible{opacity:1;visibility:visible;pointer-events:auto;transform:none}.analyze-action:hover,.analyze-action:focus-visible{outline:none;background:#7c5cff;color:#fff}.analyze-action svg{width:19px;height:19px;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.analyze-action .spark{fill:currentColor;stroke:none}
   .status{display:none;margin:0 auto 8px;width:max-content;max-width:80vw;padding:7px 11px;border-radius:8px;background:rgba(12,13,18,.85);color:#d9dae2;font-size:12px}.status.visible{display:block}.status.error{color:#ffb4b4}
 `;
@@ -42,6 +43,7 @@ export class SubtitleOverlay {
   private readonly status: HTMLDivElement;
   private readonly caption: HTMLDivElement;
   private sentence?: CaptionSentence;
+  private translationError?: string;
   private chineseVisible = true;
   private position: SubtitlePosition = { xPercent: 50, yPercent: 74 };
   private videoBounds?: DOMRect;
@@ -61,7 +63,7 @@ export class SubtitleOverlay {
     this.panel.innerHTML = `
       <div class="status"></div>
       <div class="caption">
-        <button class="analyze-action" type="button" data-action="analyze" title="AI 解析本句" aria-label="AI 解析本句">
+        <button class="analyze-action" type="button" data-action="analyze" >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="m14.8 5.2 4 4L8.4 19.6a2 2 0 0 1-2.8-2.8Z" />
             <path d="m12.8 7.2 4 4" />
@@ -88,7 +90,21 @@ export class SubtitleOverlay {
     this.panel.querySelector('[data-action="analyze"]')?.addEventListener("click", () => {
       this.handlers.onAnalyze();
     });
+    this.localize();
     document.documentElement.append(this.host);
+  }
+
+  localize(): void {
+    if (this.translationError) this.chinese.textContent = t(this.translationError);
+    const action = this.panel.querySelector<HTMLButtonElement>(".analyze-action")!;
+    action.title = t("AI 解析本句");
+    action.setAttribute("aria-label", action.title);
+    if (this.status.dataset.message) this.status.textContent = t(this.status.dataset.message);
+    for (const word of this.english.querySelectorAll<HTMLElement>(".word")) {
+      word.title = t("单击复制，双击查询");
+      word.dataset.copySuccess = t("已复制");
+      word.dataset.copyError = t("复制失败");
+    }
   }
 
   setEnabled(enabled: boolean): void {
@@ -130,6 +146,7 @@ export class SubtitleOverlay {
   showSentence(sentence: CaptionSentence): void {
     if (this.sentence?.id === sentence.id) return;
     this.sentence = sentence;
+    this.translationError = undefined;
     this.panel.classList.add("visible");
     this.caption.classList.add("visible");
     window.clearTimeout(this.wordClickTimer);
@@ -143,7 +160,9 @@ export class SubtitleOverlay {
       const span = document.createElement("span");
       span.className = "word";
       span.textContent = token.value;
-      span.title = "单击复制，双击查询";
+      span.title = t("单击复制，双击查询");
+      span.dataset.copySuccess = t("已复制");
+      span.dataset.copyError = t("复制失败");
       span.addEventListener("click", (event) => this.handleWordClick(event, span, token.value));
       span.addEventListener("dblclick", (event) => this.handleWordDoubleClick(event, token.value));
       this.english.append(span);
@@ -160,17 +179,20 @@ export class SubtitleOverlay {
 
   showTranslation(sentenceId: string, translation: string): void {
     if (this.sentence?.id !== sentenceId) return;
+    this.translationError = undefined;
     this.chinese.textContent = translation;
   }
 
   showTranslationError(sentenceId: string, message = "翻译暂时不可用"): void {
     if (this.sentence?.id !== sentenceId) return;
-    this.chinese.textContent = message;
+    this.translationError = message;
+    this.chinese.textContent = t(message);
   }
 
   showStatus(message: string, error = false): void {
     this.panel.classList.add("visible");
-    this.status.textContent = message;
+    this.status.dataset.message = message;
+    this.status.textContent = t(message);
     this.status.className = `status visible${error ? " error" : ""}`;
   }
 

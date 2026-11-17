@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Tubitle - 语言学习者的双语字幕翻译神器",
-  "description": "YouTube AI双语实时字幕、离线词典、上下句跳转，大模型语句分析。",
+  "name": "__MSG_extensionName__",
+  "default_locale": "en",
+  "description": "__MSG_extensionDescription__",
   "version": "1.0.0",
   "minimum_chrome_version": "120",
   "permissions": ["alarms", "storage", "activeTab", "clipboardWrite"],

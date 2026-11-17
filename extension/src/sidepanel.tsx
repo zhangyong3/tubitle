@@ -1,3 +1,5 @@
+import { t, initializeI18n, getUiLanguage } from "./shared/i18n";
+import { useI18n } from "./shared/use-i18n";
 import { TUBITLE_SITE_URL } from "./shared/learning-sync";
 import { historyVideoTarget } from "./shared/history-navigation";
 import { LearningSyncIndicator } from "./learning-sync-indicator";
@@ -211,10 +213,11 @@ function DictionaryDefinition({ html, css, onSearch, onPlaybackError }: {
       observer?.disconnect();
     };
   }, [html, css]);
-  return <iframe className="definition" ref={frame} title="离线词典释义" sandbox="allow-same-origin" />;
+  return <iframe className="definition" ref={frame} title={t("离线词典释义")} sandbox="allow-same-origin" />;
 }
 
 function App() {
+  useI18n();
   const [activeTab, setActiveTab] = useState<SidebarTab>(EMBEDDED ? "subtitles" : "dictionary");
   const [autoReturnSeconds, setAutoReturnSeconds] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -493,7 +496,7 @@ function App() {
   }, []);
 
   async function copyAnalysis() {
-    const content = `原句：${analysisSentence}\n${analysisText}`.trim();
+    const content = t("原句：{0}\n{1}", analysisSentence, analysisText).trim();
     if (!content) return;
     try {
       await navigator.clipboard.writeText(content);
@@ -561,20 +564,20 @@ function App() {
         />
         <main className="analysis-page" id="analysis-panel" role="tabpanel" aria-labelledby="analysis-tab">
         <header className="analysis-header">
-          <div><div className="brand">Tubitle</div><h1>{savedTranslation ? "句子译文" : "句子解析"}</h1></div>
-          <button type="button" onClick={() => void copyAnalysis()}>{copyStatus}</button>
+          <div><div className="brand">Tubitle</div><h1>{savedTranslation ? t("句子译文") : t("句子解析")}</h1></div>
+          <button type="button" onClick={() => void copyAnalysis()}>{t(copyStatus)}</button>
         </header>
-        <section className="analysis-original"><div className="analysis-label">原句</div><p>{analysisSentence}</p></section>
+        <section className="analysis-original"><div className="analysis-label">{t("原句")}</div><p>{analysisSentence}</p></section>
         <section className="analysis-output">
-          {analysisText ? <AnalysisText value={analysisText} /> : <div className="analysis-waiting">{analysisStatus === "streaming" ? "正在获取解析…" : "未生成解析"}</div>}
+          {analysisText ? <AnalysisText value={analysisText} /> : <div className="analysis-waiting">{analysisStatus === "streaming" ? t("正在获取解析…") : t("未生成解析")}</div>}
           {analysisStatus === "streaming" && <span className="typewriter-cursor" aria-hidden="true" />}
         </section>
-        {analysisError && <div className="analysis-stream-error">{analysisError}
-          {analysisAction.reason === "LOGIN_REQUIRED" && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl || `${TUBITLE_SITE_URL}/zh/sign-in` })}>登录 Tubitle</button>}
-          {analysisAction.reason === "QUOTA_EXHAUSTED" && analysisAction.actionUrl && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl })}>查看 / 升级套餐</button>}
+        {analysisError && <div className="analysis-stream-error">{t(analysisError)}
+          {analysisAction.reason === "LOGIN_REQUIRED" && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl || `${TUBITLE_SITE_URL}/${getUiLanguage().startsWith("zh") ? "zh" : "en"}/sign-in` })}>{t("登录 Tubitle")}</button>}
+          {analysisAction.reason === "QUOTA_EXHAUSTED" && analysisAction.actionUrl && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl })}>{t("查看 / 升级套餐")}</button>}
         </div>}
         <div className={`analysis-progress ${analysisStatus}`}>
-          {analysisStatus === "streaming" ? "大模型正在生成，内容会实时显示…" : analysisStatus === "done" ? "解析完成" : "解析未完整完成"}
+          {analysisStatus === "streaming" ? t("大模型正在生成，内容会实时显示…") : analysisStatus === "done" ? t("解析完成") : t("解析未完整完成")}
         </div>
         </main>
       </div>
@@ -594,38 +597,38 @@ function App() {
         />
         <main className="history-page" id="history-panel" role="tabpanel" aria-labelledby="history-tab">
           <header className="history-header">
-            <div><div className="brand">Tubitle</div><h1>历史记录</h1></div>
-            {visibleHistory.length > 0 && <button type="button" onClick={() => void clearHistory()}>清空</button>}
+            <div><div className="brand">Tubitle</div><h1>{t("历史记录")}</h1></div>
+            {visibleHistory.length > 0 && <button type="button" onClick={() => void clearHistory()}>{t("清空")}</button>}
           </header>
-          <p className="history-retention-note">最近 {historyRetentionDays} 天 · 点击记录查看内容 · 右侧图标跳转视频或删除</p>
-          {playbackError && <p className="error" role="alert">{playbackError}</p>}
+          <p className="history-retention-note">{t("最近 {0} 天 · 点击记录查看内容 · 使用图标跳转视频或删除", historyRetentionDays)}</p>
+          {playbackError && <p className="error" role="alert">{t(playbackError)}</p>}
           {visibleHistory.length > 0 ? (
             <div className="history-tree">
               {groupHistoryByDate(visibleHistory).map((group, dateIndex) => (
                 <details className="history-date" key={group.date} open={dateIndex === 0}>
-                  <summary><span>{group.date}</span><small>{group.entries.length} 条</small></summary>
+                  <summary><span>{group.date}</span><small>{t("记录数：{0}", group.entries.length)}</small></summary>
                   <div className="history-date-branches">
                     {(["dictionary", "analysis", "translation"] as const).map((kind) => {
                       const entries = group.entries.filter((entry) => entry.type === kind);
                       const label = kind === "dictionary" ? "查词" : kind === "analysis" ? "句子分析" : "句子翻译";
                       return entries.length ? <details className="history-category" key={kind} open>
-                        <summary>{label}<small>{entries.length}</small></summary>
+                        <summary>{t(label)}<small>{entries.length}</small></summary>
                         <div className="history-list">
                           {entries.map((entry) => {
                             const target = historyVideoTarget(entry);
                             return <article className="history-item history-tree-item" key={entry.id}>
-                              <button type="button" className="history-jump" onClick={() => entry.type === "dictionary" ? void search(entry.word, false) : openSavedAnalysis(entry)} title={entry.type === "dictionary" ? "查看查词记录" : "查看句子记录"}>
+                              <button type="button" className="history-jump" onClick={() => entry.type === "dictionary" ? void search(entry.word, false) : openSavedAnalysis(entry)} title={entry.type === "dictionary" ? t("查看查词记录") : t("查看句子记录")}>
                                 <span className="history-content"><strong>{entry.type === "dictionary" ? entry.word : entry.sentence}</strong>
                                   {entry.type !== "dictionary" && <small>{analysisPreview(entry.result)}</small>}
-                                  <small>{target ? `${entry.videoTitle || "原视频"} · ${formatCaptionTime(target.startMs)}` : "无视频位置"}</small>
+                                  <small>{target ? `${entry.videoTitle || t("原视频")} · ${formatCaptionTime(target.startMs)}` : t("无视频位置")}</small>
                                 </span>
                                 <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
                               </button>
                               <div className="history-record-actions">
-                                <button type="button" className="history-icon" disabled={!target} aria-label={`跳转视频：${entry.type === "dictionary" ? entry.word : entry.sentence}`} title={target ? "跳转到 YouTube 对应位置" : "此记录没有视频位置"} onClick={() => jumpToHistory(entry)}>
+                                <button type="button" className="history-icon" disabled={!target} aria-label={t("跳转视频：{0}", entry.type === "dictionary" ? entry.word : entry.sentence)} title={target ? t("跳转到 YouTube 对应位置") : t("此记录没有视频位置")} onClick={() => jumpToHistory(entry)}>
                                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3 10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" /></svg>
                                 </button>
-                                <button type="button" className="history-icon history-delete" aria-label={`删除记录：${entry.type === "dictionary" ? entry.word : entry.sentence}`} title="删除这条本地历史" onClick={() => void deleteSidebarHistory(entry.id).then(setHistory).catch(() => setPlaybackError("删除失败，请重试"))}>
+                                <button type="button" className="history-icon history-delete" aria-label={t("删除记录：{0}", entry.type === "dictionary" ? entry.word : entry.sentence)} title={t("删除这条本地历史")} onClick={() => void deleteSidebarHistory(entry.id).then(setHistory).catch(() => setPlaybackError("删除失败，请重试"))}>
                                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg>
                                 </button>
                               </div>
@@ -638,7 +641,7 @@ function App() {
                 </details>
               ))}
             </div>
-          ) : <div className="status empty">暂无历史记录。查词、保存译文或完成语句分析后会显示在这里。</div>}
+          ) : <div className="status empty">{t("暂无历史记录。查词、保存译文或完成语句分析后会显示在这里。")}</div>}
         </main>
       </div>
     );
@@ -664,14 +667,14 @@ function App() {
             <div className="dictionary-heading">
               <h1 className="word">{lookup.word}</h1>
               <a className="dictionary-link" href={`https://www.ldoceonline.com/search/?${new URLSearchParams({ q: lookup.word })}`}
-                target="_blank" rel="noopener noreferrer">在朗文查看 <span aria-hidden="true">↗</span></a>
+                target="_blank" rel="noopener noreferrer">{t("在朗文查看")}<span aria-hidden="true">↗</span></a>
             </div>
             {offlineConfigured && (
               <section className="dictionary-source" aria-labelledby="offline-heading">
-                <h2 id="offline-heading">离线词典</h2>
-                {playbackError && <div className="audio-error">{playbackError}</div>}
-                {!result ? <div className="status">正在查询离线词典…</div>
-                  : result.error ? <div className="status error">{result.error}</div>
+                <h2 id="offline-heading">{t("离线词典")}</h2>
+                {playbackError && <div className="audio-error">{t(playbackError)}</div>}
+                {!result ? <div className="status">{t("正在查询离线词典…")}</div>
+                  : result.error ? <div className="status error">{t(result.error)}</div>
                   : result.definition ? (
                     <DictionaryDefinition
                       html={result.definition}
@@ -679,9 +682,9 @@ function App() {
                       onSearch={(entry) => void search(entry)}
                       onPlaybackError={setPlaybackError}
                     />
-                  ) : <div className="status empty">离线词典中没有找到完全匹配的词条。</div>}
+                  ) : <div className="status empty">{t("离线词典中没有找到完全匹配的词条。")}</div>}
                 {!!result?.suggestions.length && (
-                  <div className="suggestions"><div className="brand">相关词条</div>{result.suggestions.map((word) => (
+                  <div className="suggestions"><div className="brand">{t("相关词条")}</div>{result.suggestions.map((word) => (
                     <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
                   ))}</div>
                 )}
@@ -690,12 +693,12 @@ function App() {
             <section className="dictionary-source" aria-labelledby="wordnet-heading">
               <h2 id="wordnet-heading">{WORDNET_NAME}</h2>
               <div aria-live="polite">
-                {wordNetError ? <div className="status error">暂时无法加载 WordNet 释义。</div>
-                  : !wordNetResult ? <div className="status">正在查询 WordNet…</div>
-                  : !wordNetResult.senses.length ? <div className="status empty">WordNet 中没有找到这个词条。</div>
+                {wordNetError ? <div className="status error">{t("暂时无法加载 WordNet 释义。")}</div>
+                  : !wordNetResult ? <div className="status">{t("正在查询 WordNet…")}</div>
+                  : !wordNetResult.senses.length ? <div className="status empty">{t("WordNet 中没有找到这个词条。")}</div>
                   : <>
                     {wordNetResult.lemma !== lookup.word && (
-                      <p className="brand">按原形查到：<strong lang="en">{wordNetResult.lemma}</strong></p>
+                      <p className="brand">{t("按原形查到：")}<strong lang="en">{wordNetResult.lemma}</strong></p>
                     )}
                     <ol className="wordnet-senses" lang="en">{wordNetResult.senses.map((sense, index) => (
                       <li key={index}>
@@ -707,17 +710,16 @@ function App() {
                   </>}
               </div>
               <details className="dictionary-credit">
-                <summary>WordNet 版权与许可 · CC BY 4.0</summary>
+                <summary>{t("WordNet 版权与许可 · CC BY 4.0")}</summary>
                 <p>
                   <a href={WORDNET_SITE} target="_blank" rel="noopener noreferrer">{WORDNET_NAME}</a> · {WORDNET_COPYRIGHT}
-                  {" "}<a href={WORDNET_LICENSE} target="_blank" rel="noopener noreferrer">CC BY 4.0</a> · 节选释义和例句，重新排版。
-                </p>
+                  {" "}<a href={WORDNET_LICENSE} target="_blank" rel="noopener noreferrer">CC BY 4.0</a>{t("· 节选释义和例句，重新排版。")}</p>
                 <p lang="en">{PRINCETON_NOTICE}</p>
-                <a href={PRINCETON_LICENSE} target="_blank" rel="noopener noreferrer">Princeton WordNet 许可原文</a>
+                <a href={PRINCETON_LICENSE} target="_blank" rel="noopener noreferrer">{t("Princeton WordNet 许可原文")}</a>
               </details>
             </section>
           </>
-        ) : <div className="status">在 YouTube 字幕中双击英文单词，即可在这里查询。</div>}
+        ) : <div className="status">{t("在 YouTube 字幕中双击英文单词，即可在这里查询。")}</div>}
       </main>
     </div>
   );
@@ -728,7 +730,7 @@ function SidebarTabs({ activeTab, onSelect }: {
   onSelect: (tab: SidebarTab) => void;
 }) {
   return (
-    <nav className="side-tabs" role="tablist" aria-label="学习工具">
+    <nav className="side-tabs" role="tablist" aria-label={t("学习工具")}>
       <button
         type="button"
         className={`side-tab${activeTab === "subtitles" ? " active" : ""}`}
@@ -737,9 +739,7 @@ function SidebarTabs({ activeTab, onSelect }: {
         aria-selected={activeTab === "subtitles"}
         aria-controls="subtitles-panel"
         onClick={() => onSelect("subtitles")}
-      >
-        字幕
-      </button>
+      >{t("字幕")}</button>
       <button
         type="button"
         className={`side-tab${activeTab === "dictionary" ? " active" : ""}`}
@@ -748,9 +748,7 @@ function SidebarTabs({ activeTab, onSelect }: {
         aria-selected={activeTab === "dictionary"}
         aria-controls="dictionary-panel"
         onClick={() => onSelect("dictionary")}
-      >
-        查词
-      </button>
+      >{t("查词")}</button>
       <button
         type="button"
         className={`side-tab${activeTab === "analysis" ? " active" : ""}`}
@@ -759,9 +757,7 @@ function SidebarTabs({ activeTab, onSelect }: {
         aria-selected={activeTab === "analysis"}
         aria-controls="analysis-panel"
         onClick={() => onSelect("analysis")}
-      >
-        语句分析
-      </button>
+      >{t("语句分析")}</button>
       <button
         type="button"
         className={`side-tab${activeTab === "history" ? " active" : ""}`}
@@ -770,9 +766,7 @@ function SidebarTabs({ activeTab, onSelect }: {
         aria-selected={activeTab === "history"}
         aria-controls="history-panel"
         onClick={() => onSelect("history")}
-      >
-        历史
-      </button>
+      >{t("历史")}</button>
     </nav>
   );
 }
@@ -784,6 +778,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
   studyFeedback?: { text: string; error?: boolean };
   visible: boolean;
 }) {
+  useI18n();
   const listRef = useRef<HTMLOListElement>(null);
   const scrollFrame = useRef<number | undefined>(undefined);
   const activeIndex = snapshot?.activeIndex ?? -1;
@@ -846,42 +841,40 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
     >
       <header className="transcript-header">
         <div className="transcript-heading-copy">
-          <div className="brand">Tubitle · 当前视频</div>
-          <h1>{snapshot?.videoTitle || "双语字幕"}</h1>
+          <div className="brand">{t("Tubitle · 当前视频")}</div>
+          <h1>{snapshot?.videoTitle || t("双语字幕")}</h1>
         </div>
         <div className="transcript-actions">
           {snapshot && !snapshot.loading && !snapshot.error && snapshot.sentences.length > 0 && (
             <button type="button" className="collapse-panel export-pdf" disabled={exporting} onClick={() => void exportPdf()}>
-              {exporting ? "生成中…" : "下载 PDF"}
+              {exporting ? t("生成中…") : t("下载 PDF")}
             </button>
           )}
-          <label><input type="checkbox" checked={autoFollow} onChange={(event) => onAutoFollowChange(event.target.checked)} /> 自动跟随</label>
+          <label><input type="checkbox" checked={autoFollow} onChange={(event) => onAutoFollowChange(event.target.checked)} />{t("自动跟随")}</label>
           {EMBEDDED && (
             <button
               type="button"
               className="collapse-panel"
-              aria-label="收起学习面板"
+              aria-label={t("收起学习面板")}
               onClick={() => postToHost({ source: "tubitle-panel", type: "COLLAPSE_PANEL" })}
-            >
-              收起
-            </button>
+            >{t("收起")}</button>
           )}
         </div>
       </header>
-      <div className="transcript-progress" aria-label="视频播放进度">
+      <div className="transcript-progress" aria-label={t("视频播放进度")}>
         <time>{formatCaptionTime(snapshot?.currentTimeMs ?? 0)}</time>
         <div><span style={{ width: `${progress}%` }} /></div>
         <time>{formatCaptionTime(snapshot?.durationMs ?? 0)}</time>
       </div>
       {(exportError || studyFeedback) && (
         <div className={`transcript-feedback${exportError || studyFeedback?.error ? " error" : ""}`} role="status">
-          {exportError || studyFeedback?.text}
+          {t(exportError || studyFeedback?.text || "")}
         </div>
       )}
       {snapshot?.loading ? (
-        <div className="transcript-state">正在读取当前视频字幕…</div>
+        <div className="transcript-state">{t("正在读取当前视频字幕…")}</div>
       ) : snapshot?.error ? (
-        <div className="transcript-state error">{snapshot.error}</div>
+        <div className="transcript-state error">{t(snapshot.error)}</div>
       ) : snapshot?.sentences.length ? (
         <ol
           className="transcript-list"
@@ -896,7 +889,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
           ))}
         </ol>
       ) : (
-        <div className="transcript-state">打开一个带英文字幕的 YouTube 视频后，字幕会显示在这里。</div>
+        <div className="transcript-state">{t("打开一个带英文字幕的 YouTube 视频后，字幕会显示在这里。")}</div>
       )}
     </main>
   );
@@ -908,6 +901,7 @@ const TranscriptCueRow = memo(function TranscriptCueRow({ sentence, index, activ
   active: boolean;
   videoId: string;
 }) {
+  useI18n();
   return (
     <li className={`transcript-item${active ? " active" : ""}`} data-index={index}>
       <button
@@ -921,17 +915,17 @@ const TranscriptCueRow = memo(function TranscriptCueRow({ sentence, index, activ
         <span className="transcript-copy">
           <strong>{sentence.text}</strong>
           {!sentence.translationSkipped && <small className={sentence.translationError ? "translation-error" : ""}>
-            {sentence.translation || sentence.translationError || "正在翻译…"}
+            {sentence.translation || t(sentence.translationError || "正在翻译…")}
           </small>}
         </span>
       </button>
       {!sentence.translationSkipped && <button
         type="button"
         className="transcript-study"
-        title="翻译并保存到 PDF 旁批"
-        aria-label={`翻译并保存 ${formatCaptionTime(sentence.startMs)} 的字幕`}
+        title={t("翻译并保存到 PDF 旁批")}
+        aria-label={t("翻译并保存 {0} 的字幕", formatCaptionTime(sentence.startMs))}
         onClick={() => postToHost({ source: "tubitle-panel", type: "STUDY_CAPTION", videoId, sentenceId: sentence.id })}
-      >译</button>}
+      ><span aria-hidden="true">↳</span></button>}
     </li>
   );
 });
@@ -942,16 +936,17 @@ function analysisPreview(value: string): string {
 
 function formatHistoryTime(createdAt: number): string {
   const date = new Date(createdAt);
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString(getUiLanguage(), { hour: "2-digit", minute: "2-digit" });
 }
 
 function AnalysisText({ value }: { value: string }) {
   return <div className="analysis-text">{value.split("\n").map((line, index) => {
     const heading = /^(翻译|结构|词汇|短语)\s*[：:](.*)$/.exec(line);
     return <div className={heading ? "analysis-line heading" : "analysis-line"} key={index}>
-      {heading ? <><strong>{heading[1]}</strong><span>{heading[2]}</span></> : line || "\u00a0"}
+      {heading ? <><strong>{t(heading[1]!)}</strong><span>{heading[2]}</span></> : line || "\u00a0"}
     </div>;
   })}</div>;
 }
 
+initializeI18n(true);
 createRoot(document.getElementById("root")!).render(<App />);

@@ -22,6 +22,7 @@ export interface SubtitleAppearance {
 
 export interface ExtensionSettings {
   settingsVersion: number;
+  uiLanguage: import("./ui-language").UiLanguage;
   serviceMode: import("./service-mode").ServiceMode;
   enabled: boolean;
   showChinese: boolean;

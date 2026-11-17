@@ -1,3 +1,4 @@
+import { resolveUiLanguage } from "./ui-language";
 declare const __TUBITLE_TRANSLATION_URL__: string | undefined;
 import { serviceMode, translationProvider } from "./service-mode";
 import { DEFAULT_HISTORY_RETENTION_DAYS, normalizeHistoryDays } from "./history-retention";
@@ -6,7 +7,8 @@ import type { ExtensionSettings } from "./types";
 export const MAX_AUTO_RETURN_SECONDS = 3600;
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  settingsVersion: 9,
+  settingsVersion: 10,
+  uiLanguage: resolveUiLanguage(typeof navigator === "undefined" ? "en" : navigator.language),
   serviceMode: "tubitle",
   enabled: true,
   showChinese: true,
@@ -81,6 +83,7 @@ export async function getSettings(): Promise<ExtensionSettings> {
     ...saved,
     tubitleBaseUrl: DEFAULT_SETTINGS.tubitleBaseUrl,
     tubitleApiKey: "",
+    uiLanguage: resolveUiLanguage(saved?.uiLanguage || DEFAULT_SETTINGS.uiLanguage),
     serviceMode: serviceMode(saved?.serviceMode),
     provider: translationProvider(saved?.serviceMode, saved?.provider || DEFAULT_SETTINGS.provider),
     historyRetentionDays: normalizeHistoryDays(saved?.historyRetentionDays),
@@ -110,6 +113,7 @@ export async function updateSettings(
     ...patch,
     tubitleBaseUrl: DEFAULT_SETTINGS.tubitleBaseUrl,
     tubitleApiKey: "",
+    uiLanguage: resolveUiLanguage(patch.uiLanguage ?? current.uiLanguage),
     serviceMode: serviceMode(patch.serviceMode ?? current.serviceMode),
     provider: translationProvider(patch.serviceMode ?? current.serviceMode, patch.provider ?? current.provider),
     historyRetentionDays: normalizeHistoryDays(patch.historyRetentionDays ?? current.historyRetentionDays),

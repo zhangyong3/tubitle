@@ -1,3 +1,4 @@
+import { initializeI18n, subscribeUiLanguage } from "../shared/i18n";
 import { historyNavigationAction } from "../shared/history-navigation";
 import { decodeTextEntities } from "../shared/text-entities";
 import { captionErrorNotice, CAPTION_NOTICE_DURATION_MS } from "./caption-errors";
@@ -684,6 +685,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
   });
 });
 
+initializeI18n();
+subscribeUiLanguage(() => {
+  overlay.localize();
+  learningPanel.localize();
+});
 void getSettings().then((loaded) => {
   settings = loaded;
   applySettings();

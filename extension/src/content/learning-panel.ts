@@ -1,3 +1,4 @@
+import { t } from "../shared/i18n";
 import type {
   TranscriptPanelFrameMessage,
   TranscriptPanelHostMessage,
@@ -60,11 +61,11 @@ export class PageLearningPanel {
 
     this.frame.className = "frame";
     this.frame.src = chrome.runtime.getURL("sidepanel.html?embedded=1");
-    this.frame.title = "Tubitle 学习面板";
+    this.frame.title = t("Tubitle 学习面板");
 
     this.launcher.className = "launcher";
     this.launcher.type = "button";
-    this.launcher.append(launcherIcon(), document.createTextNode("字幕"));
+    this.launcher.append(launcherIcon(), document.createTextNode(t("字幕")));
     this.launcher.addEventListener("click", () => {
       this.manuallyCollapsed = false;
       this.forcedOverlay = true;
@@ -74,6 +75,11 @@ export class PageLearningPanel {
     root.append(this.frame, this.launcher);
     document.documentElement.append(this.host);
     window.addEventListener("message", this.onMessage);
+  }
+
+  localize(): void {
+    this.frame.title = t("Tubitle 学习面板");
+    this.launcher.lastChild!.textContent = t("字幕");
   }
 
   setVisible(visible: boolean): void {
