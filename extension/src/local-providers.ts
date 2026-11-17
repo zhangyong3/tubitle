@@ -216,7 +216,7 @@ export async function requestAnalysis(sentence: string, settings: ExtensionSetti
   const key = required(settings.llmApiKey, "请先配置大模型 API Key");
   const base = required(settings.llmBaseUrl, "请先配置大模型 API 地址").replace(/\/+$/, "");
   const response = await fetch(`${base}/chat/completions`, {
-    method: "POST",
+    method: "POST", credentials: "omit", redirect: "error",
     headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: settings.llmModel.trim() || "gpt-4.1-mini",

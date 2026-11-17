@@ -1,0 +1,281 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Mdict = void 0;
+const util_1 = require("./util");
+const mdict_parser_1 = require("./mdict-parser");
+class Mdict extends mdict_parser_1.MDictParser {
+    constructor(file) {
+        super(file);
+        this.mutual_ticket = 0;
+        this.trail = null;
+    }
+    static async build(file) {
+        const instance = new Mdict(file);
+        await instance.init();
+        return instance;
+    }
+    reduce(arr, phrase) {
+        let len = arr.length;
+        if (len > 1) {
+            len = len >> 1;
+            return phrase > this.adaptKey(arr[len - 1].last_word) ?
+                this.reduce(arr.slice(len), phrase) :
+                this.reduce(arr.slice(0, len), phrase);
+        }
+        else {
+            return arr[0];
+        }
+    }
+    shrink(arr, phrase) {
+        let len = arr.length, sub;
+        if (len > 1) {
+            len = len >> 1;
+            let key = this.adaptKey(arr[len].word);
+            if (phrase < key) {
+                sub = arr.slice(0, len);
+                sub.pos = arr.pos;
+            }
+            else {
+                sub = arr.slice(len);
+                sub.pos = (arr.pos || 0) + len;
+            }
+            return this.shrink(sub, phrase);
+        }
+        else {
+            return (arr.pos || 0) + (phrase <= this.adaptKey(arr[0].word) ? 0 : 1);
+        }
+    }
+    loadKeys(kdx) {
+        if (this.cached_keys && this.cached_keys.pilot === kdx.first_word) {
+            return util_1.resolve(this.cached_keys.list);
+        }
+        else {
+            return this.slicedKeyBlock.then(input => {
+                let scanner = this.scan.init(input), list = Array(kdx.num_entries);
+                scanner.forward(kdx.offset);
+                scanner = scanner.readBlock(kdx.comp_size, kdx.decomp_size);
+                for (let i = 0; i < kdx.num_entries; i++) {
+                    let offset = scanner.readNum();
+                    list[i] = {
+                        word: scanner.readText(),
+                        offset
+                    };
+                    if (i > 0)
+                        list[i - 1].size = offset - list[i - 1].offset;
+                }
+                this.cached_keys = {
+                    list,
+                    pilot: kdx.first_word
+                };
+                return list;
+            });
+        }
+    }
+    seekVanguard(phrase) {
+        phrase = this.adaptKey(phrase);
+        let kdx = this.reduce(this.KEY_INDEX, phrase);
+        if (phrase <= this.adaptKey(kdx.last_word)) {
+            let index = kdx.index - 1, prev;
+            while (prev = this.KEY_INDEX[index]) {
+                if (this.adaptKey(prev.last_word) !== this.adaptKey(kdx.last_word))
+                    break;
+                kdx = prev;
+                index--;
+            }
+        }
+        return this.loadKeys(kdx).then(list => {
+            let idx = this.shrink(list, phrase);
+            while (idx > 0) {
+                if (this.adaptKey(list[--idx].word) !== this.adaptKey(phrase)) {
+                    idx++;
+                    break;
+                }
+            }
+            return [kdx, Math.min(idx, list.length - 1), list];
+        });
+    }
+    appendMore(word, list, nextKdx, expectedSize, filter, ticket) {
+        if (ticket !== this.mutual_ticket)
+            throw 'force terminated';
+        if (filter) {
+            if (this.trail.count < expectedSize && nextKdx && nextKdx.first_word.substr(0, word.length) === word) {
+                return this.loadKeys(nextKdx).then(more => {
+                    this.trail.offset = 0;
+                    this.trail.block = nextKdx.index;
+                    Array.prototype.push.apply(list, more.filter(filter, this.trail));
+                    return this.appendMore(word, list, this.KEY_INDEX[nextKdx.index + 1], expectedSize, filter, ticket);
+                });
+            }
+            else {
+                if (list.length === 0)
+                    this.trail.exhausted = true;
+                return util_1.resolve(list);
+            }
+        }
+        else {
+            let shortage = expectedSize - list.length;
+            if (shortage > 0 && nextKdx) {
+                console.log('go next', nextKdx);
+                this.trail.block = nextKdx.index;
+                return this.loadKeys(nextKdx).then(more => {
+                    this.trail.offset = 0;
+                    this.trail.pos = Math.min(shortage, more.length);
+                    Array.prototype.push.apply(list, more.slice(0, shortage));
+                    console.log('$$ ' + more[shortage - 1], shortage);
+                    return this.appendMore(word, list, this.KEY_INDEX[nextKdx.index + 1], expectedSize, filter, ticket);
+                });
+            }
+            else {
+                if (this.trail.pos > expectedSize) {
+                    this.trail.pos = expectedSize;
+                }
+                list = list.slice(0, expectedSize);
+                this.trail.count = list.length;
+                this.trail.total += this.trail.count;
+                return util_1.resolve(list);
+            }
+        }
+    }
+    followUp() {
+        let kdx = this.KEY_INDEX[this.trail.block];
+        return this.loadKeys(kdx).then(list => {
+            return [kdx, Math.min(this.trail.offset + this.trail.pos, list.length - 1), list];
+        });
+    }
+    matchKeys(phrase, expectedSize = 0, follow) {
+        let filter;
+        expectedSize = Math.max(expectedSize, 10);
+        let str = phrase.trim().toLowerCase(), m = /([^?*]+)[?*]+/.exec(str), word;
+        if (m) {
+            word = m[1];
+            const wildcard = new RegExp('^' +
+                str.replace(/([.\\+\[^\]$()])/g, '\\$1')
+                    .replace(/\*+/g, '.*')
+                    .replace(/\?/g, '.') + '$'), tester = phrase[phrase.length - 1] === ' ' ? s => wildcard.test(s) : s => wildcard.test(s) && !/ /.test(s);
+            filter = (s, i) => {
+                if (this.trail.count < expectedSize && tester(s)) {
+                    this.trail.count++;
+                    this.trail.total++;
+                    this.trail.pos = i + 1;
+                    return true;
+                }
+                return false;
+            };
+        }
+        else {
+            word = phrase.trim();
+        }
+        if (this.trail && this.trail.phrase !== phrase)
+            follow = false;
+        if (follow && this.trail && this.trail.exhausted)
+            return util_1.resolve([]);
+        let startFrom = follow && this.trail ? this.followUp() : this.seekVanguard(word);
+        return startFrom.then(([kdx, idx, list]) => {
+            console.log('start  ', kdx);
+            list = list.slice(idx);
+            this.trail = {
+                phrase: phrase,
+                block: kdx.index,
+                offset: idx,
+                pos: list.length,
+                count: 0,
+                total: follow ? this.trail && this.trail.total || 0 : 0
+            };
+            if (filter)
+                list = list.filter(filter, this.trail);
+            return this.appendMore(word, list, this.KEY_INDEX[kdx.index + 1], expectedSize, filter, ++this.mutual_ticket)
+                .then(result => {
+                if (this.trail.block === this.KEY_INDEX.length - 1) {
+                    if (this.trail.offset + this.trail.pos >= this.KEY_INDEX[this.trail.block].num_entries) {
+                        this.trail.exhausted = true;
+                        console.log('EXHAUSTED!!!!');
+                    }
+                }
+                console.log('trail: ', this.trail);
+                return result;
+            });
+        });
+    }
+    matchOffset(list, offset) {
+        return list.some(el => {
+            el.offset === offset ? list = [el] : false;
+        }) ? list : [];
+    }
+    readDefinition(input, block, offset) {
+        let scanner = this.scan.init(input).readBlock(block.comp_size, block.decomp_size);
+        scanner.forward(offset - block.decomp_offset);
+        return scanner.readText();
+    }
+    async redirects(definition) {
+        if ((definition.substring(0, 8) !== '@@@LINK=')) {
+            return definition;
+        }
+        const name = definition.substring(8);
+        let results = await this.mdx(name);
+        results = results.filter(({ word }) => word === name);
+        if (results.length > 0) {
+            return await this.getDefinition(results[0].offset);
+        }
+        return '';
+    }
+    read_object(input, block, keyInfo) {
+        if (input.byteLength > 0) {
+            let scanner = this.scan.init(input).readBlock(block.comp_size, block.decomp_size);
+            scanner.forward(keyInfo.offset - block.decomp_offset);
+            return scanner.readRaw(keyInfo.size);
+        }
+        else {
+            throw '* OUT OF FILE RANGE * ' + keyInfo + ' @offset=' + block.comp_offset;
+        }
+    }
+    findResource(keyInfo) {
+        let block = this.RECORD_BLOCK_TABLE.find(keyInfo.offset);
+        return this.read(block.comp_offset, block.comp_size).then(res => this.read_object(res, block, keyInfo));
+    }
+    mdx(query, offset) {
+        if (typeof query === 'string' || query instanceof String) {
+            this.trail = null;
+            let word = query.trim().toLowerCase();
+            return this.seekVanguard(word).then(([kdx, idx, list]) => {
+                list = list.slice(idx);
+                if (offset)
+                    list = this.matchOffset(list, offset);
+                return list;
+            });
+        }
+        else {
+            return this.matchKeys(query.word, query.max, query.follow);
+        }
+    }
+    mdd(query) {
+        let word = query.trim().toLowerCase();
+        word = '\\' + word.replace(/(^[/\\])|([/]$)/, '');
+        word = word.replace(/\//g, '\\');
+        return this.seekVanguard(word).then(([, , list]) => {
+            // TODO: check why seekVanguard return error value
+            return list.filter(e => e.word.toLowerCase() === word);
+        }).then(candidates => {
+            if (candidates.length === 0) {
+                throw '*RESOURCE NOT FOUND* ' + query;
+            }
+            else {
+                return this.findResource(candidates[0]);
+            }
+        });
+    }
+    getWordList(query, offset) {
+        return this.ext === 'mdx' ? this.mdx(query, offset) : this.mdd(query);
+    }
+    getDefinition(offset) {
+        let block = this.RECORD_BLOCK_TABLE.find(offset);
+        return this.read(block.comp_offset, block.comp_size).then((data) => {
+            return this.readDefinition(data, block, offset).trim();
+        }).then((definition) => {
+            if (this.StyleSheet.length)
+                definition = util_1.parseRes(definition, this.StyleSheet);
+            return this.redirects(definition);
+        });
+    }
+}
+exports.Mdict = Mdict;
+module.exports = Mdict;

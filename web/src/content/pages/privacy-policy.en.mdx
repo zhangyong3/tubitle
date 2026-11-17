@@ -1,0 +1,25 @@
+export const meta = {
+  title: 'Privacy policy',
+  description: 'How Tubitle web accounts and saved learning records are handled.',
+  updated_at: '2026-11-16',
+};
+
+## Accounts and sessions
+
+Registration stores the name and email you provide and a secure hash of your password. Necessary session cookies support sign-in. Session IP, browser information, language and registration attribution may also be recorded for account operation and security.
+
+## Learning records
+
+When you sign in to Tubitle in the same Chrome browser, the extension automatically uploads video word lookups, subtitle context, completed AI sentence analyses, video titles and playback positions. Anonymous queries stay local and are never backfilled after sign-in. Full viewing history, offline MDX files, dictionary content and personal provider keys are not uploaded.
+
+Sync uses the website session directly. No connection code is required. Signing out or session expiry stops uploads. Pending signed-in records retry under their original account; signing out or changing accounts clears the old queue while preserving local history.
+
+Records are isolated by account. Export your active records or delete individual records in My library. Deletion removes the saved content while retaining minimal identifiers and timestamps to prevent retries from recreating it. Existing backups are not immediately erased by that action.
+
+## Third-party services
+
+Source-video links open YouTube under its own data policies. In the default Tubitle mode, requesting AI analysis sends the sentence through the website to its configured AI provider. In personal API mode, subtitles and sentences go directly from the extension to the providers you configure; personal API keys are not uploaded to Tubitle and platform AI allowances are not consumed. Learning records still sync while signed in. Request identifiers, sentence hashes and daily usage are stored for accounting. Results are cached for same-day retries; expired caches are cleared on subsequent account requests. Analyses may separately be saved as learning records, which you can delete. Free accounts receive 3 analyses daily and Pro accounts 100, resetting at midnight Beijing time. Failures do not count. Syncing existing records does not invoke AI. OAuth, email, payment and analytics services operate only if configured and enabled by the site operator.
+
+## Local development release
+
+This delivery uses a local SQLite database and a local preview URL. It is not a public hosted service. Before public launch, the operator must supply contact details, actual hosting locations, retention periods and an account-deletion process.

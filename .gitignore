@@ -14,3 +14,10 @@ extension/*.zip
 __pycache__/
 .pytest_cache/
 tags
+
+# Web workspace package cache
+.pnpm-store/
+
+# Runtime source of the browser dictionary vendor must survive clean checkouts.
+!extension/vendor/mdict-browser/dist/
+!extension/vendor/mdict-browser/dist/**

@@ -1,0 +1,11 @@
+overrides:
+  seroval: 1.6.8
+  seroval-plugins: 1.6.8
+  next: '-'
+allowBuilds:
+  '@parcel/watcher': true
+  '@swc/core': true
+  esbuild: true
+  msw: true
+  sharp: true
+  workerd: false

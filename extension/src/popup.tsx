@@ -36,15 +36,15 @@ function App() {
         <span>显示翻译</span>
         <button className={`toggle ${settings.showChinese ? "on" : ""}`} onClick={() => void patch({ showChinese: !settings.showChinese })} aria-label="显示翻译"><span /></button>
       </div>
-      <div className="row">
+      <div className="row"><span>服务方式</span><span>{settings.serviceMode === "tubitle" ? "Tubitle" : "自备 API"}</span></div>
+      {settings.serviceMode === "custom" && <div className="row">
         <label htmlFor="provider">翻译引擎</label>
         <select id="provider" value={settings.provider} onChange={(event) => void patch({ provider: event.target.value as TranslationProvider })}>
           <option value="microsoft">Microsoft</option>
           <option value="google">Google Cloud</option>
-          <option value="tencent">腾讯云</option>
-          <option value="hy-mt-local">使用 Tubitle 自研翻译服务</option>
         </select>
       </div>
+      }
       <button className="primary" onClick={() => void chrome.runtime.openOptionsPage()}>完整设置</button>
     </div>
   );

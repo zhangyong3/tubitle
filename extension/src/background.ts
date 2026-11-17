@@ -1,3 +1,7 @@
+import { requestSentenceAnalysis } from "./analysis-provider";
+import { AnalysisAccessError, enqueueLearning, flushLearning, syncStatus } from "./learning-sync";
+import { pruneSidebarHistory } from "./shared/sidebar-history";
+import { SYNC_ALARM } from "./shared/learning-sync";
 import { sourceLanguage, shouldSkipTranslation } from "./shared/languages";
 import { getSettings, updateSettings } from "./shared/settings";
 import type { ExtensionMessage, MessageResponse, TranslationProvider } from "./shared/types";
@@ -115,6 +119,7 @@ async function runTranslation(job: TranslationJob): Promise<string> {
 
 async function enqueueTranslation(text: string, provider: TranslationProvider, priority: "current" | "prefetch" = "prefetch", trackLanguage = "", signal?: AbortSignal): Promise<string> {
   const settings = await getSettings();
+  provider = settings.provider;
   signal?.throwIfAborted();
   const source = sourceLanguage(text, trackLanguage);
   if (shouldSkipTranslation(source, settings)) return "";
@@ -193,7 +198,14 @@ async function drainTranslationQueue(): Promise<void> {
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse: (response: MessageResponse) => void) => {
   void (async () => {
     try {
+      if (message.type.startsWith("LEARNING_SYNC_")) {
+        const extensionUrl = chrome.runtime.getURL("");
+        if (_sender.id !== chrome.runtime.id || !_sender.url?.startsWith(extensionUrl)) throw new Error("仅允许插件内部页面操作账户同步");
+
+      }
       switch (message.type) {
+        case "LEARNING_SYNC_STATUS": sendResponse({ ok: true, data: await syncStatus() }); break;
+        case "LEARNING_SYNC_ENQUEUE": await enqueueLearning(message.record); sendResponse({ ok: true, data: null }); break;
         case "GET_SETTINGS": sendResponse({ ok: true, data: await getSettings() }); break;
         case "UPDATE_SETTINGS": sendResponse({ ok: true, data: await updateSettings(message.settings) }); break;
         case "TRANSLATE": sendResponse({ ok: true, data: await enqueueTranslation(message.text, message.provider, message.priority, message.sourceLanguage) }); break;
@@ -242,19 +254,20 @@ chrome.runtime.onConnect.addListener((port) => {
     return;
   }
   if (port.name !== "analysis-stream") return;
+  if (port.sender?.id !== chrome.runtime.id || !port.sender.url?.startsWith(chrome.runtime.getURL(""))) { port.disconnect(); return; }
   let controller: AbortController | undefined;
   port.onDisconnect.addListener(() => controller?.abort());
-  port.onMessage.addListener((message: { sentence?: string }) => {
+  port.onMessage.addListener((message: { sentence?: string; requestId?: string }) => {
     if (!message.sentence || controller) return;
     controller = new AbortController();
-    void streamAnalysis(message.sentence, controller.signal, (payload) => port.postMessage(payload))
-      .catch((error) => port.postMessage({ error: errorMessage(error) }))
+    void streamAnalysis(message.sentence, message.requestId || crypto.randomUUID(), controller.signal, (payload) => port.postMessage(payload))
+      .catch((error) => port.postMessage({ error: errorMessage(error), ...(error instanceof AnalysisAccessError ? { reason: error.reason, actionUrl: error.actionUrl } : {}) }))
       .finally(() => { try { port.disconnect(); } catch { /* already closed */ } });
   });
 });
 
-async function streamAnalysis(sentence: string, signal: AbortSignal, emit: (payload: { delta?: string; done?: boolean }) => void): Promise<void> {
-  const response = await requestAnalysis(sentence, await getSettings(), signal);
+async function streamAnalysis(sentence: string, requestId: string, signal: AbortSignal, emit: (payload: { delta?: string; done?: boolean }) => void): Promise<void> {
+  const response = await requestSentenceAnalysis(sentence, requestId, await getSettings(), signal);
   if (!response.body) throw new Error("大模型没有返回可读数据流");
   if (!response.headers.get("content-type")?.includes("text/event-stream")) {
     const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
@@ -282,3 +295,22 @@ async function streamAnalysis(sentence: string, signal: AbortSignal, emit: (payl
   }
   emit({ done: true });
 }
+
+async function cleanHistory() {
+  await pruneSidebarHistory((await getSettings()).historyRetentionDays);
+}
+async function scheduleLearningSync() {
+  await chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 1 });
+  await chrome.alarms.create("history-retention", { periodInMinutes: 60 });
+  await cleanHistory();
+  await flushLearning();
+}
+chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === SYNC_ALARM) void flushLearning().catch(() => undefined); });
+chrome.runtime.onStartup.addListener(() => { void scheduleLearningSync().catch(() => undefined); });
+chrome.runtime.onInstalled.addListener(() => { void scheduleLearningSync().catch(() => undefined); });
+void scheduleLearningSync().catch(() => undefined);
+
+chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === "history-retention") void cleanHistory().catch(() => undefined); });
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.settings && changes.settings.newValue?.historyRetentionDays !== changes.settings.oldValue?.historyRetentionDays) void cleanHistory().catch(() => undefined);
+});

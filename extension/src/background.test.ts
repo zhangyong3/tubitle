@@ -3,6 +3,11 @@ import { DEFAULT_SETTINGS } from "./shared/settings";
 import { requestSubtitleTranslation } from "./shared/subtitle-translation";
 import type { ExtensionMessage, MessageResponse } from "./shared/types";
 
+vi.mock("./learning-sync", () => ({
+  syncStatus: async () => ({ connected: false, pending: 0 }), flushLearning: async () => undefined,
+  enqueueLearning: async () => undefined, requestAccountAnalysis: vi.fn(), AnalysisAccessError: class extends Error {},
+}));
+
 vi.mock("./background-cache", () => ({
   getCachedTranslation: async () => undefined,
   cacheTranslation: async () => undefined
@@ -14,20 +19,26 @@ const throttled = (seconds: string) => Response.json({
 }, { status: 429, headers: { "Retry-After": seconds } });
 
 describe("subtitle translation from the extension background", () => {
-  let send: (message: ExtensionMessage) => Promise<MessageResponse>;
+  let send: (message: ExtensionMessage, sender?: unknown) => Promise<MessageResponse>;
   const request = vi.fn<typeof fetch>();
+  let mode: "custom" | "tubitle";
 
   beforeEach(async () => {
+    mode = "custom";
     vi.useFakeTimers();
     vi.resetModules();
     request.mockReset().mockImplementation(async () => translated());
     vi.stubGlobal("fetch", request);
     let onConnect: (port: unknown) => void;
     vi.stubGlobal("chrome", {
+      alarms: { create: async () => undefined, onAlarm: { addListener() {} } },
       runtime: {
+        id: "qa-extension", getURL: (path: string) => `chrome-extension://qa-extension/${path}`,
+        onStartup: { addListener() {} },
+        onInstalled: { addListener() {} },
         onMessage: {
           addListener: (handler: (message: ExtensionMessage, sender: unknown, reply: (response: MessageResponse) => void) => void) => {
-            send = (message) => new Promise((resolve) => handler(message, {}, resolve));
+            send = (message, sender = {}) => new Promise((resolve) => handler(message, sender, resolve));
           }
         },
         onConnect: { addListener: (handler: typeof onConnect) => { onConnect = handler; } },
@@ -49,7 +60,7 @@ describe("subtitle translation from the extension background", () => {
           };
         }
       },
-      storage: { local: { get: async () => ({ settings: { ...DEFAULT_SETTINGS, microsoftTranslatorKey: "test-key" } }) } }
+      storage: { onChanged: { addListener() {} }, local: { get: async () => ({ settings: { ...DEFAULT_SETTINGS, serviceMode: mode, provider: mode === "tubitle" ? "hy-mt-local" : "microsoft", microsoftTranslatorKey: "test-key" } }) } }
     });
     await import("./background");
   });
@@ -61,6 +72,14 @@ describe("subtitle translation from the extension background", () => {
 
   const subtitle = (text: string, priority: "current" | "prefetch" = "prefetch") =>
     send({ type: "TRANSLATE", provider: "microsoft", text, sourceLanguage: "en", priority });
+
+  it("restricts sync messages to internal pages", async () => {
+    const contentSender = { id: "qa-extension", url: "https://www.youtube.com/watch?v=abcdefghijk" };
+    expect(await send({ type: "LEARNING_SYNC_STATUS" }, contentSender)).toMatchObject({ ok: false });
+    const internalSender = { id: "qa-extension", url: "chrome-extension://qa-extension/sidepanel.html" };
+    expect(await send({ type: "LEARNING_SYNC_STATUS" }, internalSender)).toMatchObject({ ok: true, data: { connected: false, pending: 0 } });
+    expect(request).not.toHaveBeenCalled();
+  });
 
   it("recovers a subtitle after a 429001 and pauses other tabs and connection tests during Retry-After", async () => {
     request.mockResolvedValueOnce(throttled("2"));
@@ -145,6 +164,7 @@ describe("subtitle translation from the extension background", () => {
       : new Promise((resolve) => {
         finish.push(() => resolve(Response.json({ translation: "本机译文", finishReason: "stop" })));
       }));
+    mode = "tubitle";
     const translations = () => request.mock.calls.filter(([url]) => String(url).endsWith("/v1/translate"));
     const local = (text: string, priority: "current" | "prefetch" = "prefetch") => send({
       type: "TRANSLATE", provider: "hy-mt-local", text, sourceLanguage: "en", priority
@@ -164,7 +184,17 @@ describe("subtitle translation from the extension background", () => {
     await expect(Promise.all([...pending, current])).resolves.toEqual(Array(5).fill({ ok: true, data: "本机译文" }));
   });
 
+  it("routes default-mode subtitles to Tubitle even when a caller passes Microsoft", async () => {
+    mode = "tubitle";
+    request.mockImplementation(async url => String(url).endsWith('/health')
+      ? Response.json({ready: true, model: 'test-model'})
+      : Response.json({translation: 'Tubitle 译文', finishReason: 'stop'}));
+    expect(await subtitle('Use the configured service.')).toEqual({ok: true, data: 'Tubitle 译文'});
+    expect(request.mock.calls.every(([url]) => String(url).startsWith(DEFAULT_SETTINGS.tubitleBaseUrl))).toBe(true);
+  });
+
   it("keeps subtitle caches separate when the Tubitle model changes", async () => {
+    mode = "tubitle";
     let model = "hy-mt2-1.8b-q4";
     request.mockImplementation(async (url) => String(url).endsWith("/health")
       ? Response.json({ ready: true, model })

@@ -22,6 +22,7 @@ export interface SubtitleAppearance {
 
 export interface ExtensionSettings {
   settingsVersion: number;
+  serviceMode: import("./service-mode").ServiceMode;
   enabled: boolean;
   showChinese: boolean;
   targetLanguage: string;
@@ -43,7 +44,7 @@ export interface ExtensionSettings {
   llmBaseUrl: string;
   llmApiKey: string;
   llmModel: string;
-  historyLimit: number;
+  historyRetentionDays: number;
   offlineDictionary: {
     configured: boolean;
     name: string;
@@ -114,6 +115,7 @@ export type TranscriptPanelHostMessage =
 
 export type TranscriptPanelFrameMessage =
   | { source: "tubitle-panel"; type: "PANEL_READY" }
+  | { source: "tubitle-panel"; type: "SEEK_HISTORY"; videoId: string; startMs: number }
   | { source: "tubitle-panel"; type: "SEEK_TO_CAPTION"; index: number }
   | { source: "tubitle-panel"; type: "STUDY_CAPTION"; videoId: string; sentenceId: string }
   | { source: "tubitle-panel"; type: "PREFETCH_CAPTIONS"; indexes: number[] }
@@ -128,6 +130,8 @@ export interface SentenceAnalysis {
 }
 
 export type ExtensionMessage =
+  | { type: "LEARNING_SYNC_STATUS" }
+  | { type: "LEARNING_SYNC_ENQUEUE"; record: import("./learning-sync").SyncRecord }
   | { type: "GET_SETTINGS" }
   | { type: "UPDATE_SETTINGS"; settings: Partial<ExtensionSettings> }
   | { type: "TRANSLATE"; text: string; sourceLanguage?: string; provider: TranslationProvider; priority?: "current" | "prefetch" }

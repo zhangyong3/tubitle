@@ -1,3 +1,4 @@
+import { normalizeHistoryDays } from "./shared/history-retention";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { LANGUAGES } from "./shared/languages";
@@ -13,7 +14,7 @@ import {
 import type { ExtensionSettings, ShortcutSettings, TranslationProvider } from "./shared/types";
 import { selectDictionaryDirectoryFiles } from "./shared/dictionary-directory";
 import { sendMessage } from "./shared/messaging";
-import { tubitleConnection } from "./shared/tubitle-connection";
+import { translationProvider } from "./shared/service-mode";
 
 const shortcutLabels: Record<keyof ShortcutSettings, string> = {
   previous: "上一句",
@@ -40,11 +41,11 @@ function App() {
   }, []);
 
   async function requestApiPermissions(settings: ExtensionSettings): Promise<boolean> {
+    if (settings.serviceMode !== "custom") return true;
     const origins = [
-      tubitleConnection(settings).origin,
-      settings.microsoftTranslatorKey.trim() && settings.microsoftTranslatorEndpoint,
+      settings.provider === "microsoft" && settings.microsoftTranslatorKey.trim() && settings.microsoftTranslatorEndpoint,
       settings.llmApiKey.trim() && settings.llmBaseUrl
-    ].filter(Boolean).map((value) => {
+    ].filter((value): value is string => typeof value === "string" && !!value).map((value) => {
       const url = new URL(value);
       return `${url.protocol}//${url.host}/*`;
     });
@@ -56,12 +57,11 @@ function App() {
     try {
       const normalized = {
         ...form,
-        tubitleBaseUrl: tubitleConnection(form).origin,
-        tubitleApiKey: form.tubitleApiKey.trim(),
+        provider: translationProvider(form.serviceMode, form.provider),
         microsoftTranslatorEndpoint: form.microsoftTranslatorEndpoint.trim().replace(/\/+$/, ""),
         llmBaseUrl: form.llmBaseUrl.trim().replace(/\/+$/, ""),
         tencentConcurrency: Math.min(5, Math.max(1, Math.round(form.tencentConcurrency) || 3)),
-        historyLimit: Math.min(100, Math.max(1, Math.round(form.historyLimit) || DEFAULT_SETTINGS.historyLimit))
+        historyRetentionDays: normalizeHistoryDays(form.historyRetentionDays)
       };
       if (!await requestApiPermissions(normalized)) throw new Error("需要先允许访问所配置的 API 域名");
       setForm(await updateSettings(normalized));
@@ -143,36 +143,36 @@ function App() {
   return (
     <main className="page">
       <h1>Tubitle 设置</h1>
-      <p className="lead">密钥仅保存在本机浏览器，不会同步到 Chrome 云端。字幕发送至所选翻译服务；使用远程 Tubitle 服务时，会发送至你配置的服务器。</p>
+      <p className="lead">默认使用 Tubitle 服务，无需填写 API Key。自备 API 的密钥仅保存在本机浏览器，不会上传到 Tubitle。</p>
       <form onSubmit={submit}>
         <section className="card">
-          <h2>翻译服务</h2>
-          <div className="grid">
-            <div className="field">
-              <label htmlFor="provider">默认翻译引擎</label>
-              <select id="provider" value={form.provider} onChange={(event) => setForm({ ...form, provider: event.target.value as TranslationProvider })}>
-                <option value="microsoft">Microsoft Translator</option>
-                <option value="google">Google Cloud Translation</option>
-                <option value="tencent">腾讯云机器翻译</option>
-                <option value="hy-mt-local">使用 Tubitle 自研翻译服务</option>
-              </select>
-            </div>
+          <h2>服务方式</h2>
+          <div className="field">
+            <label htmlFor="service-mode">字幕翻译与 AI 语句分析</label>
+            <select id="service-mode" value={form.serviceMode} onChange={(event) => {
+              const mode = event.target.value === "custom" ? "custom" : "tubitle";
+              setForm({ ...form, serviceMode: mode, provider: translationProvider(mode, form.provider) });
+              setProviderMessage("");
+            }}>
+              <option value="tubitle">使用 Tubitle 服务（默认）</option>
+              <option value="custom">使用自己的 API Key</option>
+            </select>
           </div>
-          <h3>Tubitle 自研翻译服务</h3>
-          <p className="hint">可连接本机或远程 HTTPS 服务。模型由服务端选择；本机服务无需密钥，公网服务填写管理员提供的访问密钥。</p>
-          <div className="grid">
-            <div className="field full"><label htmlFor="tubitle-base">服务地址</label><input id="tubitle-base" type="url" value={form.tubitleBaseUrl} onChange={(event) => setForm({ ...form, tubitleBaseUrl: event.target.value })} placeholder="https://translate.example.com" /></div>
-            <div className="field full"><label htmlFor="tubitle-key">访问密钥</label><input id="tubitle-key" type="password" value={form.tubitleApiKey} onChange={(event) => setForm({ ...form, tubitleApiKey: event.target.value })} autoComplete="off" /></div>
+          <p className="hint">{form.serviceMode === "tubitle"
+            ? "由 Tubitle 提供字幕翻译与 AI 语句分析。AI 解析需登录，免费版每天 3 次，Pro 每天 100 次。"
+            : "字幕与句子直接发送到你选择的服务商，费用由服务商收取，不消耗 Tubitle 额度。登录后学习记录仍会自动同步。"}</p>
+        </section>
+        {form.serviceMode === "custom" && <>
+        <section className="card">
+          <h2>字幕翻译 API</h2>
+          <div className="field">
+            <label htmlFor="provider">翻译服务商</label>
+            <select id="provider" value={form.provider} onChange={(event) => { setForm({ ...form, provider: event.target.value as TranslationProvider }); setProviderMessage(""); }}>
+              <option value="microsoft">Microsoft Translator</option>
+              <option value="google">Google Cloud Translation</option>
+            </select>
           </div>
-          <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("hy-mt-local")}>测试 Tubitle 翻译服务</button></div>
-          <h3>腾讯云机器翻译</h3>
-          <div className="grid">
-            <div className="field"><label htmlFor="tencent-id">Secret ID</label><input id="tencent-id" type="password" value={form.tencentSecretId} onChange={(event) => setForm({ ...form, tencentSecretId: event.target.value })} autoComplete="off" /></div>
-            <div className="field"><label htmlFor="tencent-key">Secret Key</label><input id="tencent-key" type="password" value={form.tencentSecretKey} onChange={(event) => setForm({ ...form, tencentSecretKey: event.target.value })} autoComplete="off" /></div>
-            <div className="field"><label htmlFor="tencent-region">地域</label><input id="tencent-region" value={form.tencentRegion} onChange={(event) => setForm({ ...form, tencentRegion: event.target.value })} /></div>
-            <div className="field"><label htmlFor="tencent-concurrency">并发数：{form.tencentConcurrency}</label><input id="tencent-concurrency" type="range" min="1" max="5" value={form.tencentConcurrency} onChange={(event) => setForm({ ...form, tencentConcurrency: Number(event.target.value) })} /></div>
-          </div>
-          <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("tencent")}>测试腾讯云</button></div>
+          {form.provider === "microsoft" ? <>
           <h3>Microsoft Translator</h3>
           <div className="grid">
             <div className="field"><label htmlFor="ms-key">Subscription Key</label><input id="ms-key" type="password" value={form.microsoftTranslatorKey} onChange={(event) => setForm({ ...form, microsoftTranslatorKey: event.target.value })} autoComplete="off" /></div>
@@ -180,13 +180,15 @@ function App() {
             <div className="field full"><label htmlFor="ms-endpoint">Endpoint</label><input id="ms-endpoint" type="url" value={form.microsoftTranslatorEndpoint} onChange={(event) => setForm({ ...form, microsoftTranslatorEndpoint: event.target.value })} /></div>
           </div>
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("microsoft")}>测试 Microsoft</button></div>
+          </> : <>
           <h3>Google Cloud Translation</h3>
           <div className="grid"><div className="field full"><label htmlFor="google-key">API Key</label><input id="google-key" type="password" value={form.googleTranslateApiKey} onChange={(event) => setForm({ ...form, googleTranslateApiKey: event.target.value })} autoComplete="off" /></div></div>
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("google")}>测试 Google</button></div>
-          {providerMessage && <p className="hint">{providerMessage}</p>}
+          </>}
         </section>
         <section className="card">
-          <h2>AI 语句分析</h2>
+          <h2>AI 语句分析 API</h2>
+          <p className="hint">填写 OpenAI 兼容接口的地址、API Key 和模型名称。无需登录 Tubitle 即可使用自备 API 解析句子。</p>
           <div className="grid">
             <div className="field full"><label htmlFor="llm-base">API Base URL</label><input id="llm-base" type="url" value={form.llmBaseUrl} onChange={(event) => setForm({ ...form, llmBaseUrl: event.target.value })} /></div>
             <div className="field"><label htmlFor="llm-key">API Key</label><input id="llm-key" type="password" value={form.llmApiKey} onChange={(event) => setForm({ ...form, llmApiKey: event.target.value })} autoComplete="off" /></div>
@@ -194,6 +196,8 @@ function App() {
           </div>
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("llm")}>测试大模型</button></div>
         </section>
+        </>}
+        {providerMessage && <p className="hint" role="status">{providerMessage}</p>}
         <section className="card">
           <h2>翻译语言</h2>
           <div className="field"><label htmlFor="target-language">目标语言</label>
@@ -269,9 +273,9 @@ function App() {
           <h2>学习面板历史</h2>
           <div className="grid">
             <div className="field">
-              <label htmlFor="history-limit">每类保留数量</label>
-              <input id="history-limit" type="number" min="1" max="100" value={form.historyLimit} onChange={(event) => setForm({ ...form, historyLimit: Number(event.target.value) })} />
-              <span className="hint">分别保留最近的查词和语句分析记录，最多各 100 条。</span>
+              <label htmlFor="history-limit">最多保存天数</label>
+              <input id="history-limit" type="number" min="1" max="365" value={form.historyRetentionDays} onChange={(event) => setForm({ ...form, historyRetentionDays: Number(event.target.value) })} />
+              <span className="hint">按本地日期保留最近 1–365 天（含今天）的查词、翻译和分析记录，默认 30 天。过期记录自动清理；不影响已上传的网页记录。</span>
             </div>
           </div>
         </section>

@@ -1,3 +1,7 @@
+import { TUBITLE_SITE_URL } from "./shared/learning-sync";
+import { historyVideoTarget } from "./shared/history-navigation";
+import { LearningSyncIndicator } from "./learning-sync-indicator";
+import { sendMessage } from "./shared/messaging";
 import { memo, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Mdict from "@tubetitle/mdict-browser";
@@ -25,7 +29,8 @@ import {
 import { getSettings, normalizeAutoReturnSeconds } from "./shared/settings";
 import {
   clearSidebarHistory,
-  DEFAULT_HISTORY_LIMIT,
+  deleteSidebarHistory,
+  DEFAULT_HISTORY_RETENTION_DAYS,
   parseSidebarHistory,
   getSidebarHistory,
   recordAnalysisHistory,
@@ -33,7 +38,8 @@ import {
   recordTranslationHistory,
   saveWordNetLookup,
   SIDEBAR_HISTORY_KEY,
-  trimSidebarHistory,
+  filterRecentHistory,
+  groupHistoryByDate,
   type AnalysisHistoryEntry,
   type SidebarHistoryEntry
 } from "./shared/sidebar-history";
@@ -213,6 +219,8 @@ function App() {
   const [autoReturnSeconds, setAutoReturnSeconds] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptPanelSnapshot>();
+  const transcriptRef = useRef<TranscriptPanelSnapshot | undefined>(undefined);
+  transcriptRef.current = transcript;
   const [transcriptAutoFollow, setTranscriptAutoFollow] = useState(true);
   const [result, setResult] = useState<LookupResult>();
   const [lookup, setLookup] = useState<{ word: string }>();
@@ -222,21 +230,25 @@ function App() {
   const [offlineRevision, setOfflineRevision] = useState(0);
   const wordNetController = useRef<AbortController | undefined>(undefined);
   const [playbackError, setPlaybackError] = useState("");
+  const [savedTranslation, setSavedTranslation] = useState(false);
   const [analysisSentence, setAnalysisSentence] = useState("");
   const [analysisText, setAnalysisText] = useState("");
   const [analysisStatus, setAnalysisStatus] = useState<"streaming" | "done" | "error">("streaming");
   const [analysisError, setAnalysisError] = useState("");
+  const [analysisAction, setAnalysisAction] = useState<{reason?: string; actionUrl?: string}>({});
   const [copyStatus, setCopyStatus] = useState("复制到笔记");
   const [studyFeedback, setStudyFeedback] = useState<{ videoId: string; text: string; error?: boolean }>();
   const [history, setHistory] = useState<SidebarHistoryEntry[]>([]);
-  const [historyLimit, setHistoryLimit] = useState(DEFAULT_HISTORY_LIMIT);
+  const [historyClock, setHistoryClock] = useState(Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setHistoryClock(Date.now()), 60000); return () => window.clearInterval(timer); }, []);
+  const [historyRetentionDays, setHistoryRetentionDays] = useState(DEFAULT_HISTORY_RETENTION_DAYS);
   const analysisController = useRef<AbortController | undefined>(undefined);
   const typewriterQueue = useRef("");
   const typewriterTimer = useRef<number | undefined>(undefined);
   const upstreamFinished = useRef(false);
   const upstreamError = useRef("");
   const upstreamText = useRef("");
-  const historyLimitRef = useRef(DEFAULT_HISTORY_LIMIT);
+  const historyRetentionDaysRef = useRef(DEFAULT_HISTORY_RETENTION_DAYS);
 
   useEffect(() => {
     if (!EMBEDDED) return;
@@ -245,6 +257,7 @@ function App() {
       const message = event.data;
       if (message?.source !== "tubitle-host") return;
       if (message.type === "TRANSCRIPT_STATE") {
+        transcriptRef.current = message.state;
         setTranscript(message.state);
       } else if (message.type === "PANEL_PLAYBACK") {
         setPlaying(message.playing);
@@ -269,8 +282,8 @@ function App() {
           return;
         }
         void recordTranslationHistory({
-          videoId, sentence: sentence.text, startMs: sentence.startMs, result: translation
-        }, historyLimitRef.current).then((entries) => {
+          videoId, videoTitle: transcriptRef.current?.videoTitle, sentence: sentence.text, startMs: sentence.startMs, result: translation
+        }, historyRetentionDaysRef.current).then((entries) => {
           setHistory(entries);
           setStudyFeedback({ videoId, text: `${formatCaptionTime(sentence.startMs)} 的译文已加入 PDF 旁批` });
         }).catch(() => setStudyFeedback({ videoId, text: "无法保存句子译文", error: true }));
@@ -303,9 +316,11 @@ function App() {
   function analyze(query: AnalysisQuery) {
     stopAnalysisStream();
     setActiveTab("analysis");
+    setSavedTranslation(false);
     setAnalysisSentence(query.sentence);
     setAnalysisText("");
     setAnalysisError("");
+    setAnalysisAction({});
     setAnalysisStatus("streaming");
     setCopyStatus("复制到笔记");
     typewriterQueue.current = "";
@@ -337,13 +352,20 @@ function App() {
         typewriterQueue.current += delta;
         upstreamText.current += delta;
       },
-      controller.signal
+      controller.signal,
+      query.requestId
     ).then(() => {
       if (analysisController.current !== controller) return;
       upstreamFinished.current = true;
-      void recordAnalysisHistory(query, upstreamText.current, historyLimitRef.current).then(setHistory);
+      void sendMessage({ type: "LEARNING_SYNC_ENQUEUE", record: {
+        clientRecordId: `analysis-${query.requestId}`, kind: "sentence", text: query.sentence,
+        analysis: upstreamText.current, videoId: query.videoId || "", videoTitle: query.videoTitle,
+        startSeconds: Math.max(0, Math.floor((query.startMs || 0) / 1000))
+      } }).catch(() => undefined);
+      void recordAnalysisHistory(query, upstreamText.current, historyRetentionDaysRef.current).then(setHistory);
     }).catch((error: unknown) => {
       if (controller.signal.aborted || analysisController.current !== controller) return;
+      setAnalysisAction(error instanceof Error ? error as Error & {reason?: string; actionUrl?: string} : {});
       upstreamError.current = error instanceof Error ? error.message : String(error);
       upstreamFinished.current = true;
     });
@@ -361,10 +383,21 @@ function App() {
     setResult(undefined);
     setWordNetResult(undefined);
     setWordNetError(false);
+    const lookupSnapshot = transcriptRef.current;
+    const lookupSentence = lookupSnapshot?.sentences[lookupSnapshot.activeIndex];
     try {
       const entries = await (saveToHistory
-        ? recordDictionaryHistory(word, historyLimitRef.current)
+        ? recordDictionaryHistory(word, historyRetentionDaysRef.current, { videoId: lookupSnapshot?.videoId, videoTitle: lookupSnapshot?.videoTitle, startMs: lookupSentence?.startMs ?? lookupSnapshot?.currentTimeMs, context: lookupSentence?.text })
         : getSidebarHistory()).catch(() => []);
+      if (saveToHistory) {
+        const entry = entries.find((item) => item.type === "dictionary" && normalizeDictionaryWord(item.word) === word);
+        void sendMessage({ type: "LEARNING_SYNC_ENQUEUE", record: {
+          clientRecordId: entry?.id || crypto.randomUUID(), kind: "word", text: word,
+          context: lookupSentence?.text || "", note: lookupSentence?.translation ? `语境译文：${lookupSentence.translation}` : "",
+          videoId: lookupSnapshot?.videoId || "", videoTitle: lookupSnapshot?.videoTitle || "",
+          startSeconds: Math.max(0, Math.floor((lookupSentence?.startMs ?? lookupSnapshot?.currentTimeMs ?? 0) / 1000))
+        } }).catch(() => undefined);
+      }
       if (controller.signal.aborted) return;
       const cached = entries.find((entry) =>
         entry.type === "dictionary" && normalizeDictionaryWord(entry.word) === word);
@@ -374,7 +407,7 @@ function App() {
       }
       const match = await lookupWordNet(word, controller.signal);
       if (controller.signal.aborted) return;
-      if (match.senses.length) await saveWordNetLookup(word, match, historyLimitRef.current).catch(() => undefined);
+      if (match.senses.length) await saveWordNetLookup(word, match, historyRetentionDaysRef.current).catch(() => undefined);
       if (!controller.signal.aborted) setWordNetResult(match);
     } catch {
       if (!controller.signal.aborted) setWordNetError(true);
@@ -408,8 +441,8 @@ function App() {
     ]).then(([stored, settings]) => {
       setOfflineConfigured(settings.offlineDictionary.configured);
       setAutoReturnSeconds(settings.autoReturnToSubtitlesSeconds);
-      historyLimitRef.current = settings.historyLimit;
-      setHistoryLimit(settings.historyLimit);
+      historyRetentionDaysRef.current = settings.historyRetentionDays;
+      setHistoryRetentionDays(settings.historyRetentionDays);
       const savedHistory = parseSidebarHistory(stored[SIDEBAR_HISTORY_KEY]);
       setHistory(savedHistory);
       if (EMBEDDED) return;
@@ -432,9 +465,9 @@ function App() {
         const next = changes.settings.newValue as ExtensionSettings | undefined;
         setAutoReturnSeconds(normalizeAutoReturnSeconds(next?.autoReturnToSubtitlesSeconds));
         setOfflineConfigured(Boolean(next?.offlineDictionary?.configured));
-        const nextHistoryLimit = next?.historyLimit ?? DEFAULT_HISTORY_LIMIT;
-        historyLimitRef.current = nextHistoryLimit;
-        setHistoryLimit(nextHistoryLimit);
+        const nextHistoryRetentionDays = next?.historyRetentionDays ?? DEFAULT_HISTORY_RETENTION_DAYS;
+        historyRetentionDaysRef.current = nextHistoryRetentionDays;
+        setHistoryRetentionDays(nextHistoryRetentionDays);
         const mdxChanged = (
           previous?.offlineDictionary?.name !== next?.offlineDictionary?.name ||
           previous?.offlineDictionary?.lastModified !== next?.offlineDictionary?.lastModified ||
@@ -471,16 +504,18 @@ function App() {
     window.setTimeout(() => setCopyStatus("复制到笔记"), 1200);
   }
 
-  function openSavedAnalysis(entry: AnalysisHistoryEntry) {
+  function openSavedAnalysis(entry: Exclude<SidebarHistoryEntry, { type: "dictionary" }>) {
     stopAnalysisStream();
     typewriterQueue.current = "";
     upstreamFinished.current = true;
     upstreamError.current = "";
     upstreamText.current = entry.result;
     setActiveTab("analysis");
+    setSavedTranslation(entry.type === "translation");
     setAnalysisSentence(entry.sentence);
     setAnalysisText(entry.result);
     setAnalysisError("");
+    setAnalysisAction({});
     setAnalysisStatus("done");
     setCopyStatus("复制到笔记");
   }
@@ -490,7 +525,14 @@ function App() {
     setHistory([]);
   }
 
-  const tabs = <SidebarTabs activeTab={activeTab} onSelect={setActiveTab} />;
+  function jumpToHistory(entry: SidebarHistoryEntry) {
+    const target = historyVideoTarget(entry);
+    if (!target) return;
+    if (EMBEDDED) postToHost({ source: "tubitle-panel", type: "SEEK_HISTORY", videoId: target.videoId, startMs: target.startMs });
+    else void chrome.tabs.create({ url: target.url }).catch(() => setPlaybackError("无法打开原视频，请稍后重试"));
+  }
+
+  const tabs = <><SidebarTabs activeTab={activeTab} onSelect={setActiveTab} /><LearningSyncIndicator /></>;
 
   if (activeTab === "subtitles") {
     return (
@@ -519,15 +561,18 @@ function App() {
         />
         <main className="analysis-page" id="analysis-panel" role="tabpanel" aria-labelledby="analysis-tab">
         <header className="analysis-header">
-          <div><div className="brand">Tubitle</div><h1>句子解析</h1></div>
+          <div><div className="brand">Tubitle</div><h1>{savedTranslation ? "句子译文" : "句子解析"}</h1></div>
           <button type="button" onClick={() => void copyAnalysis()}>{copyStatus}</button>
         </header>
         <section className="analysis-original"><div className="analysis-label">原句</div><p>{analysisSentence}</p></section>
         <section className="analysis-output">
-          {analysisText ? <AnalysisText value={analysisText} /> : <div className="analysis-waiting">正在连接大模型…</div>}
+          {analysisText ? <AnalysisText value={analysisText} /> : <div className="analysis-waiting">{analysisStatus === "streaming" ? "正在获取解析…" : "未生成解析"}</div>}
           {analysisStatus === "streaming" && <span className="typewriter-cursor" aria-hidden="true" />}
         </section>
-        {analysisError && <div className="analysis-stream-error">{analysisError}</div>}
+        {analysisError && <div className="analysis-stream-error">{analysisError}
+          {analysisAction.reason === "LOGIN_REQUIRED" && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl || `${TUBITLE_SITE_URL}/zh/sign-in` })}>登录 Tubitle</button>}
+          {analysisAction.reason === "QUOTA_EXHAUSTED" && analysisAction.actionUrl && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl })}>查看 / 升级套餐</button>}
+        </div>}
         <div className={`analysis-progress ${analysisStatus}`}>
           {analysisStatus === "streaming" ? "大模型正在生成，内容会实时显示…" : analysisStatus === "done" ? "解析完成" : "解析未完整完成"}
         </div>
@@ -537,7 +582,7 @@ function App() {
   }
 
   if (activeTab === "history") {
-    const visibleHistory = trimSidebarHistory(history, historyLimit);
+    const visibleHistory = filterRecentHistory(history, historyRetentionDays, historyClock);
     return (
       <div className="sidepanel-shell">
         {tabs}
@@ -552,28 +597,45 @@ function App() {
             <div><div className="brand">Tubitle</div><h1>历史记录</h1></div>
             {visibleHistory.length > 0 && <button type="button" onClick={() => void clearHistory()}>清空</button>}
           </header>
+          <p className="history-retention-note">最近 {historyRetentionDays} 天 · 点击记录查看内容 · 右侧图标跳转视频或删除</p>
+          {playbackError && <p className="error" role="alert">{playbackError}</p>}
           {visibleHistory.length > 0 ? (
-            <div className="history-list">
-              {visibleHistory.map((entry) => entry.type === "translation" ? (
-                <article className="history-item history-translation" key={entry.id}>
-                  <span className="history-kind">句子翻译</span>
-                  <span className="history-content"><strong>{entry.sentence}</strong><small>{entry.result}</small></span>
-                  <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
-                </article>
-              ) : (
-                <button
-                  type="button"
-                  className="history-item"
-                  key={entry.id}
-                  onClick={() => entry.type === "dictionary" ? void search(entry.word, false) : openSavedAnalysis(entry)}
-                >
-                  <span className={`history-kind ${entry.type}`}>{entry.type === "dictionary" ? "查词" : "语句分析"}</span>
-                  <span className="history-content">
-                    <strong>{entry.type === "dictionary" ? entry.word : entry.sentence}</strong>
-                    {entry.type === "analysis" && <small>{analysisPreview(entry.result)}</small>}
-                  </span>
-                  <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
-                </button>
+            <div className="history-tree">
+              {groupHistoryByDate(visibleHistory).map((group, dateIndex) => (
+                <details className="history-date" key={group.date} open={dateIndex === 0}>
+                  <summary><span>{group.date}</span><small>{group.entries.length} 条</small></summary>
+                  <div className="history-date-branches">
+                    {(["dictionary", "analysis", "translation"] as const).map((kind) => {
+                      const entries = group.entries.filter((entry) => entry.type === kind);
+                      const label = kind === "dictionary" ? "查词" : kind === "analysis" ? "句子分析" : "句子翻译";
+                      return entries.length ? <details className="history-category" key={kind} open>
+                        <summary>{label}<small>{entries.length}</small></summary>
+                        <div className="history-list">
+                          {entries.map((entry) => {
+                            const target = historyVideoTarget(entry);
+                            return <article className="history-item history-tree-item" key={entry.id}>
+                              <button type="button" className="history-jump" onClick={() => entry.type === "dictionary" ? void search(entry.word, false) : openSavedAnalysis(entry)} title={entry.type === "dictionary" ? "查看查词记录" : "查看句子记录"}>
+                                <span className="history-content"><strong>{entry.type === "dictionary" ? entry.word : entry.sentence}</strong>
+                                  {entry.type !== "dictionary" && <small>{analysisPreview(entry.result)}</small>}
+                                  <small>{target ? `${entry.videoTitle || "原视频"} · ${formatCaptionTime(target.startMs)}` : "无视频位置"}</small>
+                                </span>
+                                <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
+                              </button>
+                              <div className="history-record-actions">
+                                <button type="button" className="history-icon" disabled={!target} aria-label={`跳转视频：${entry.type === "dictionary" ? entry.word : entry.sentence}`} title={target ? "跳转到 YouTube 对应位置" : "此记录没有视频位置"} onClick={() => jumpToHistory(entry)}>
+                                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3 10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" /></svg>
+                                </button>
+                                <button type="button" className="history-icon history-delete" aria-label={`删除记录：${entry.type === "dictionary" ? entry.word : entry.sentence}`} title="删除这条本地历史" onClick={() => void deleteSidebarHistory(entry.id).then(setHistory).catch(() => setPlaybackError("删除失败，请重试"))}>
+                                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg>
+                                </button>
+                              </div>
+                            </article>;
+                          })}
+                        </div>
+                      </details> : null;
+                    })}
+                  </div>
+                </details>
               ))}
             </div>
           ) : <div className="status empty">暂无历史记录。查词、保存译文或完成语句分析后会显示在这里。</div>}
@@ -880,12 +942,7 @@ function analysisPreview(value: string): string {
 
 function formatHistoryTime(createdAt: number): string {
   const date = new Date(createdAt);
-  const today = new Date();
-  const sameDay = date.getFullYear() === today.getFullYear() &&
-    date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
-  return sameDay
-    ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
 function AnalysisText({ value }: { value: string }) {

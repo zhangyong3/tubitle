@@ -179,7 +179,7 @@ describe("cuesToSentences", () => {
     }))));
     const result = await fetchBilingualCaptions(["en", "fr"].map((languageCode) => ({
       baseUrl: `https://www.youtube.com/api/timedtext?lang=${languageCode}`, languageCode, name: languageCode
-    })), { ...DEFAULT_SETTINGS, targetLanguage: "fr" });
+    })), { ...DEFAULT_SETTINGS, serviceMode: "custom", provider: "microsoft", targetLanguage: "fr" });
     expect(result.sentences.map((item) => item.text)).toEqual([long, "Next sentence."]);
     expect(result.sentences.map((item) => result.officialTranslations.get(item.id)))
       .toEqual(["Première traduction.", "Deuxième traduction."]);
@@ -188,7 +188,7 @@ describe("cuesToSentences", () => {
     const { fetchBilingualCaptions } = await import("./captions");
     const { DEFAULT_SETTINGS } = await import("../shared/settings");
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: url.includes("lang=fr") ? "Bonjour." : "Hello." }] }] }))));
-    const result = await fetchBilingualCaptions(["en", "fr", "zh"].map((languageCode) => ({ baseUrl: `https://www.youtube.com/api/timedtext?lang=${languageCode}`, languageCode, name: languageCode })), { ...DEFAULT_SETTINGS, targetLanguage: "fr" });
+    const result = await fetchBilingualCaptions(["en", "fr", "zh"].map((languageCode) => ({ baseUrl: `https://www.youtube.com/api/timedtext?lang=${languageCode}`, languageCode, name: languageCode })), { ...DEFAULT_SETTINGS, serviceMode: "custom", provider: "microsoft", targetLanguage: "fr" });
     expect([...result.officialTranslations.values()]).toEqual(["Bonjour."]);
   });
 });

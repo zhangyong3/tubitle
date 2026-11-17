@@ -6,6 +6,7 @@ import type {
 } from "../shared/types";
 
 interface LearningPanelHandlers {
+  onHistorySeek: (videoId: string, startMs: number) => void;
   onSeek: (index: number) => void;
   onStudy: (videoId: string, sentenceId: string) => void;
   onPrefetch: (indexes: number[]) => void;
@@ -159,6 +160,8 @@ export class PageLearningPanel {
         this.post({ source: "tubitle-host", type: "LOOKUP_WORD", word: this.pendingWord });
         this.pendingWord = undefined;
       }
+    } else if (message.type === "SEEK_HISTORY") {
+      this.handlers.onHistorySeek(message.videoId, message.startMs);
     } else if (message.type === "SEEK_TO_CAPTION" && Number.isInteger(message.index)) {
       this.handlers.onSeek(message.index);
     } else if (message.type === "STUDY_CAPTION") {

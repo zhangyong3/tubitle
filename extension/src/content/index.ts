@@ -1,3 +1,4 @@
+import { historyNavigationAction } from "../shared/history-navigation";
 import { decodeTextEntities } from "../shared/text-entities";
 import { captionErrorNotice, CAPTION_NOTICE_DURATION_MS } from "./caption-errors";
 import { sourceLanguage, shouldSkipTranslation } from "../shared/languages";
@@ -124,6 +125,16 @@ const overlay = new SubtitleOverlay({
 });
 
 const learningPanel = new PageLearningPanel({
+  onHistorySeek: (videoId, startMs) => {
+    const action = historyNavigationAction({ videoId, startMs }, new URL(location.href).searchParams.get("v"));
+    if (action?.type === "navigate") location.assign(action.url);
+    else if (action?.type === "seek") {
+      const video = videoElement();
+      if (!video) return;
+      video.currentTime = Number.isFinite(video.duration) ? Math.min(action.seconds, video.duration) : action.seconds;
+      void video.play().catch(() => undefined);
+    }
+  },
   onSeek: (index) => seekTo(index),
   onStudy: (videoId, id) => void studySentenceTranslation(videoId, id),
   onPrefetch: (indexes) => prefetchCaptionIndexes(indexes)
@@ -438,6 +449,7 @@ async function analyzeCurrentSentence(): Promise<void> {
       [ANALYSIS_QUERY_KEY]: {
         sentence: sentence.text,
         videoId: new URL(location.href).searchParams.get("v") ?? undefined,
+        videoTitle: document.title.replace(/ - YouTube$/, ""),
         startMs: sentence.startMs,
         requestId: crypto.randomUUID(),
         createdAt: Date.now()

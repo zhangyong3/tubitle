@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "..",
+    "paths": {
+      "@/config/db/schema": ["./src/config/db/schema.postgres.ts"],
+      "@/*": ["./src/*"]
+    }
+  }
+}

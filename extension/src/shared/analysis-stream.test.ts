@@ -25,8 +25,8 @@ describe("streaming sentence analysis", () => {
       }
     });
     let received = "";
-    await streamSentenceAnalysis("Hello.", (delta) => { received += delta; }, new AbortController().signal);
-    expect(posted).toEqual({ sentence: "Hello." });
+    await streamSentenceAnalysis("Hello.", (delta) => { received += delta; }, new AbortController().signal, "qa-request");
+    expect(posted).toEqual({ sentence: "Hello.", requestId: "qa-request" });
     expect(received).toBe("翻译：你好\n结构：主谓宾");
   });
 });

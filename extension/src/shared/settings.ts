@@ -1,9 +1,13 @@
+declare const __TUBITLE_TRANSLATION_URL__: string | undefined;
+import { serviceMode, translationProvider } from "./service-mode";
+import { DEFAULT_HISTORY_RETENTION_DAYS, normalizeHistoryDays } from "./history-retention";
 import type { ExtensionSettings } from "./types";
 
 export const MAX_AUTO_RETURN_SECONDS = 3600;
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  settingsVersion: 7,
+  settingsVersion: 9,
+  serviceMode: "tubitle",
   enabled: true,
   showChinese: true,
   targetLanguage: "zh",
@@ -11,8 +15,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   hoverPause: true,
   resumeAfterHover: true,
   autoReturnToSubtitlesSeconds: 10,
-  provider: "microsoft",
-  tubitleBaseUrl: "http://127.0.0.1:18081",
+  provider: "hy-mt-local",
+  tubitleBaseUrl: typeof __TUBITLE_TRANSLATION_URL__ === "string" ? __TUBITLE_TRANSLATION_URL__ : "http://127.0.0.1:18081",
   tubitleApiKey: "",
   microsoftTranslatorKey: "",
   microsoftTranslatorRegion: "",
@@ -25,7 +29,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   llmBaseUrl: "https://api.openai.com/v1",
   llmApiKey: "",
   llmModel: "gpt-4.1-mini",
-  historyLimit: 20,
+  historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS,
   offlineDictionary: { configured: false, name: "", size: 0, lastModified: 0 },
   offlineDictionaryCss: { configured: false, name: "", size: 0, lastModified: 0 },
   offlineDictionaryResources: { configured: false, files: [] },
@@ -59,6 +63,7 @@ export async function getSettings(): Promise<ExtensionSettings> {
   const raw = result[STORAGE_KEY] as (Partial<ExtensionSettings> & Record<string, unknown>) | undefined;
   const saved = raw ? { ...raw } : undefined;
   if (saved) {
+    delete saved.historyLimit;
     delete saved.accessToken;
     delete saved.refreshToken;
     delete saved.installationId;
@@ -74,6 +79,11 @@ export async function getSettings(): Promise<ExtensionSettings> {
   const settings: ExtensionSettings = {
     ...DEFAULT_SETTINGS,
     ...saved,
+    tubitleBaseUrl: DEFAULT_SETTINGS.tubitleBaseUrl,
+    tubitleApiKey: "",
+    serviceMode: serviceMode(saved?.serviceMode),
+    provider: translationProvider(saved?.serviceMode, saved?.provider || DEFAULT_SETTINGS.provider),
+    historyRetentionDays: normalizeHistoryDays(saved?.historyRetentionDays),
     autoReturnToSubtitlesSeconds: normalizeAutoReturnSeconds(saved?.autoReturnToSubtitlesSeconds),
     offlineDictionary: { ...DEFAULT_SETTINGS.offlineDictionary, ...saved?.offlineDictionary },
     offlineDictionaryCss: { ...DEFAULT_SETTINGS.offlineDictionaryCss, ...saved?.offlineDictionaryCss },
@@ -98,6 +108,11 @@ export async function updateSettings(
   const next = {
     ...current,
     ...patch,
+    tubitleBaseUrl: DEFAULT_SETTINGS.tubitleBaseUrl,
+    tubitleApiKey: "",
+    serviceMode: serviceMode(patch.serviceMode ?? current.serviceMode),
+    provider: translationProvider(patch.serviceMode ?? current.serviceMode, patch.provider ?? current.provider),
+    historyRetentionDays: normalizeHistoryDays(patch.historyRetentionDays ?? current.historyRetentionDays),
     autoReturnToSubtitlesSeconds: normalizeAutoReturnSeconds(patch.autoReturnToSubtitlesSeconds ?? current.autoReturnToSubtitlesSeconds),
     offlineDictionary: { ...current.offlineDictionary, ...patch.offlineDictionary },
     offlineDictionaryCss: { ...current.offlineDictionaryCss, ...patch.offlineDictionaryCss },
