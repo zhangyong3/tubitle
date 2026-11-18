@@ -3,12 +3,14 @@ import { createFileRoute } from '@tanstack/react-router';
 import { envConfigs } from '@/config';
 import { m } from '@/paraglide/messages.js';
 import { getLocale, locales, localizeUrl } from '@/paraglide/runtime.js';
+import { CTA } from '@/blocks/cta';
 import { FAQ } from '@/blocks/faq';
 import { Features } from '@/blocks/features';
 import { Footer } from '@/blocks/footer';
 import { Header } from '@/blocks/header';
 import { Hero } from '@/blocks/hero';
 import { Pricing } from '@/blocks/pricing';
+import { ProductTour } from '@/blocks/product-tour';
 
 /**
  * Default landing page — demo content. Rewrite this file (and the blocks in
@@ -24,9 +26,11 @@ function HomePage() {
       <Header />
       <main id="main-content">
         <Hero />
+        <ProductTour />
         <Features />
         <Pricing />
         <FAQ />
+        <CTA />
       </main>
       <Footer />
     </div>
@@ -47,7 +51,7 @@ export const Route = createFileRoute('/')({
         { title: m['common.metadata.title']({}, { locale: locale as any }) },
         {
           name: 'description',
-          content: m['landing.hero.subheadline']({}, { locale: locale as any }),
+          content: m['tubitle.hero.description']({}, { locale: locale as any }),
         },
       ],
       links: [

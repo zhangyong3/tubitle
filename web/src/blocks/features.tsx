@@ -1,6 +1,5 @@
-import { ArrowUpRight, Bookmark, Captions, RotateCcw } from 'lucide-react';
+import { Bookmark, Captions, RotateCcw } from 'lucide-react';
 
-import { Link } from '@/core/i18n/navigation';
 import { m } from '@/paraglide/messages.js';
 
 export function Features() {
@@ -37,31 +36,6 @@ export function Features() {
               <p>{step.text}</p>
             </article>
           ))}
-        </div>
-      </section>
-      <section className="tt-feature-band">
-        <div className="tt-container tt-feature-layout">
-          <div>
-            <p className="tt-eyebrow">TUBITLE / YOUR LEARNING NOTEBOOK</p>
-            <h2>{m['tubitle.feature.title']()}</h2>
-            <p>{m['tubitle.feature.description']()}</p>
-            <Link href="/settings" className="tt-text-link">
-              {m['tubitle.nav.library']()}
-              <ArrowUpRight size={18} />
-            </Link>
-          </div>
-          <div className="tt-feature-notes">
-            <article>
-              <span className="tt-dot" />
-              <h3>{m['tubitle.feature.current']()}</h3>
-              <p>{m['tubitle.feature.currentText']()}</p>
-            </article>
-            <article>
-              <span className="tt-dot tt-dot-outline" />
-              <h3>{m['tubitle.feature.future']()}</h3>
-              <p>{m['tubitle.feature.futureText']()}</p>
-            </article>
-          </div>
         </div>
       </section>
     </>
