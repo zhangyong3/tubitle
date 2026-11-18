@@ -100,6 +100,11 @@ it('reports connection failure separately from a signed-out session and recovers
 
 describe('account subtitle translation', () => {
   const selection = { userId: 'alice', provider: 'microsoft', model: 'Translator/v3.0', revision: 'a'.repeat(64) };
+  it('retains platform rate-limit status and Retry-After for the prefetch scheduler', async () => {
+    request.mockResolvedValue(Response.json({ code: -1, message: '翻译请求过于频繁' }, {status:429, headers:{'retry-after':'12'}}));
+    const sync = await import('./learning-sync');
+    await expect(sync.requestAccountTranslation('Hello', 'en', 'zh', selection)).rejects.toMatchObject({status:429, retryAfterMs:12000});
+  });
   it('discovers fresh revisions, coalesces lookups and sends only account-bound requests', async () => {
     account = { userId: 'alice', name: 'Alice' };
     let revision = selection.revision;
@@ -130,5 +135,33 @@ describe('account subtitle translation', () => {
     request.mockImplementation(async (_url, init) => init?.method === 'POST' ? ok({ translation: '你好', revision: selection.revision }) : ok(account));
     const sync = await import('./learning-sync');
     await expect(sync.requestAccountTranslation('Hello', 'en', 'zh', selection)).rejects.toThrow('账户已切换');
+  });
+});
+
+describe('account analysis streaming', () => {
+  it('returns a live body without waiting for generation to finish', async () => {
+    account = { userId: 'alice', name: 'Alice' };
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    const bytes = new TextEncoder();
+    request.mockImplementation(async (_url, init) => init?.method === 'GET' ? ok(account) : new Response(new ReadableStream({ start(controller) {
+      upstream = controller;
+      controller.enqueue(bytes.encode('data: first\n\n'));
+    } }), {headers:{'content-type':'text/event-stream'}}));
+    const sync = await import('./learning-sync');
+    const response = await sync.requestAccountAnalysis('Hello.', crypto.randomUUID(), new AbortController().signal);
+    const reader = response.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain('first');
+    upstream.close();
+    expect((await reader.read()).done).toBe(true);
+  });
+  it('refuses successful completion after an account switch', async () => {
+    account = { userId: 'alice', name: 'Alice' };
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    request.mockImplementation(async (_url, init) => init?.method === 'GET' ? ok(account) : new Response(new ReadableStream({ start(controller) { upstream = controller; } }), {headers:{'content-type':'text/event-stream'}}));
+    const sync = await import('./learning-sync');
+    const response = await sync.requestAccountAnalysis('Hello.', crypto.randomUUID(), new AbortController().signal);
+    account = { userId: 'bob', name: 'Bob' };
+    upstream.close();
+    await expect(response.text()).rejects.toThrow('账户已切换');
   });
 });

@@ -100,20 +100,112 @@ test('API requires login, blocks exhausted accounts, refunds provider failures a
     assert.equal((await send(credential, crypto.randomUUID(), { plan: 'pro' })).status, 400);
     await saveConfigs({ openai_base_url: 'https://ai.example.test/v1', openai_api_key: 'test-only-key', openai_model: 'test-model' });
     fail = true;
-    assert.equal((await send(credential)).status, 503);
+    const failed = await send(credential);
+    assert.match(await failed.text(), /未完整完成/);
     assert.equal((await analysis.quota(credential.userId)).used, 0);
     fail = false;
     const requestId = crypto.randomUUID();
     const response = await send(credential, requestId);
     assert.equal(response.status, 200);
-    assert.match((await response.json()).data.choices[0].message.content, /你好/);
+    assert.match(await response.text(), /你好/);
     const before = calls;
-    assert.equal((await send(credential, requestId)).status, 200);
+    const cached = await send(credential, requestId);
+    assert.equal(cached.status, 200);
+    assert.match(await cached.text(), /你好/);
     assert.equal(calls, before);
     assert.equal((await analysis.quota(credential.userId)).used, 1);
     const { getAuth } = await import('../src/core/auth');
     await getAuth().api.signOut({ headers: new Headers({cookie: credential.cookie}) });
     assert.equal((await send(credential)).status, 401);
     assert.equal(calls, before);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('API streams the first delta before generation finishes', async () => {
+  const { handleExtensionAnalysis } = await import('../src/routes/api/extension/analysis');
+  const { testLogin } = await import('./helpers/login');
+  const { saveConfigs } = await import('../src/modules/config/service');
+  const credential = await testLogin('streaming');
+  await saveConfigs({ openai_base_url: 'https://ai.example.test/v1', openai_api_key: 'test-only-key', openai_model: 'test-model' });
+  const realFetch = globalThis.fetch;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  let started!: () => void;
+  const upstreamStarted = new Promise<void>(resolve => started = resolve);
+  let streaming: unknown;
+  globalThis.fetch = async (_url, init) => {
+    streaming = JSON.parse(String(init?.body)).stream;
+    return new Response(new ReadableStream({ async start(controller) {
+      const encoder = new TextEncoder();
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"翻译：你好"}}]}\r\n\r\n'));
+      started();
+      await gate;
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"。"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+      controller.close();
+    } }), { headers: { 'content-type': 'text/event-stream' } });
+  };
+  globalThis.__minIntervalRateLimitStore?.clear();
+  const pending = handleExtensionAnalysis(new Request('http://localhost:3000/api/extension/analysis', {
+    method: 'POST', headers: { 'content-type': 'application/json', origin: 'chrome-extension://' + 'a'.repeat(32), 'x-tubitle-extension': '1', cookie: credential.cookie, 'x-tubitle-account': credential.userId },
+    body: JSON.stringify({ sentence: 'Hello.', requestId: crypto.randomUUID() }),
+  }));
+  try {
+    await upstreamStarted;
+    const earlyResponse = await Promise.race([pending, new Promise<undefined>(resolve => setTimeout(resolve, 150))]);
+    assert.ok(earlyResponse, 'gateway must respond before the provider finishes');
+    assert.equal(streaming, true);
+    assert.match(earlyResponse.headers.get('content-type')!, /text\/event-stream/);
+    const reader = earlyResponse.body!.getReader();
+    const first = await Promise.race([reader.read(), new Promise<undefined>(resolve => setTimeout(resolve, 150))]);
+    assert.ok(first, 'first delta must arrive before completion');
+    assert.match(new TextDecoder().decode(first.value), /你好/);
+    release();
+    let rest = '';
+    while (true) { const chunk = await reader.read(); if (chunk.done) break; rest += new TextDecoder().decode(chunk.value); }
+    assert.match(rest, /\[DONE\]/);
+    assert.equal((await analysis.quota(credential.userId)).used, 1);
+  } finally { release(); await pending; globalThis.fetch = realFetch; }
+});
+
+test('stream failures, truncation and client cancellation refund once and never cache partial analysis', async () => {
+  const { handleExtensionAnalysis } = await import('../src/routes/api/extension/analysis');
+  const { testLogin } = await import('./helpers/login');
+  const { saveConfigs } = await import('../src/modules/config/service');
+  await saveConfigs({ openai_base_url: 'https://ai.example.test/v1', openai_api_key: 'test-only-key', openai_model: 'test-model' });
+  const credential = await testLogin('stream-failure');
+  const realFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+  try {
+    for (const mode of ['truncated', 'provider-error', 'cancel']) {
+      let cancelled = false;
+      globalThis.fetch = async () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'));
+          if (mode === 'truncated') { controller.enqueue(encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n')); controller.close(); }
+          if (mode === 'provider-error') { controller.enqueue(encoder.encode('data: {"error":{"message":"private vendor detail"}}\n\n')); controller.close(); }
+        },
+        cancel() { cancelled = true; },
+      }), { headers: { 'content-type': 'text/event-stream' } });
+      globalThis.__minIntervalRateLimitStore?.clear();
+      const requestId = crypto.randomUUID();
+      const response = await handleExtensionAnalysis(new Request('http://localhost:3000/api/extension/analysis', {
+        method: 'POST', headers: { 'content-type': 'application/json', origin: 'chrome-extension://' + 'a'.repeat(32), 'x-tubitle-extension': '1', cookie: credential.cookie, 'x-tubitle-account': credential.userId },
+        body: JSON.stringify({ sentence: 'Hello.', requestId }),
+      }));
+      if (mode === 'cancel') {
+        const reader = response.body!.getReader();
+        assert.match(new TextDecoder().decode((await reader.read()).value), /partial/);
+        await reader.cancel();
+        for (let attempt = 0; attempt < 50 && (await analysis.quota(credential.userId)).used; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+        assert.equal(cancelled, true);
+      } else {
+        const text = await response.text();
+        assert.match(text, /partial/);
+        assert.match(text, /未扣除额度/);
+        assert.doesNotMatch(text, /\[DONE\]|private vendor detail/);
+      }
+      assert.equal((await analysis.quota(credential.userId)).used, 0);
+      await assert.rejects(analysis.reserve(credential.userId, requestId, 'Hello.'), { code: 'REQUEST_FAILED' });
+    }
   } finally { globalThis.fetch = realFetch; }
 });

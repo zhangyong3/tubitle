@@ -5,7 +5,7 @@
   "description": "__MSG_extensionDescription__",
   "version": "1.0.0",
   "minimum_chrome_version": "120",
-  "permissions": ["alarms", "storage", "activeTab", "clipboardWrite"],
+  "permissions": ["alarms", "storage", "unlimitedStorage", "activeTab", "clipboardWrite"],
   "host_permissions": [
     "https://www.youtube.com/*",
     "https://*.googlevideo.com/*",

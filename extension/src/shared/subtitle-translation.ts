@@ -14,7 +14,7 @@ export async function requestSubtitleTranslation(message: SubtitleTranslationReq
       signal.removeEventListener("abort", abort);
       port.disconnect();
       if (response.ok) resolve(response.data);
-      else reject(new Error(response.error));
+      else reject(Object.assign(new Error(response.error), { status: response.status, retryAfterMs: response.retryAfterMs }));
     }
     function abort() {
       if (settled) return;

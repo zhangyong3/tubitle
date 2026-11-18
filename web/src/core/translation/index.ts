@@ -8,7 +8,8 @@ import {
 export class TranslationError extends Error {
   constructor(
     message: string,
-    public status = 503
+    public status = 503,
+    public retryAfterMs = 0
   ) {
     super(message);
   }
@@ -38,10 +39,13 @@ const urlFor = (base: string, path: string) =>
 async function json(url: string, init: RequestInit): Promise<any> {
   const response = await fetch(url, { ...init, redirect: 'error' });
   if (!response.ok || !response.body) {
+    const header = response.headers.get('retry-after')?.trim();
+    const delay = header ? (/^\d+(?:\.\d+)?$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now()) : 0;
     await response.body?.cancel();
     throw new TranslationError(
       `翻译供应商请求失败（HTTP ${response.status}）`,
-      response.status === 429 ? 429 : 503
+      response.status === 429 ? 429 : 503,
+      Number.isFinite(delay) ? Math.max(0, delay) : 0
     );
   }
   const reader = response.body.getReader();

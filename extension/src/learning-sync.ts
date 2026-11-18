@@ -103,6 +103,11 @@ export class AnalysisAccessError extends Error {
   constructor(message: string, public reason?: string, public actionUrl?: string) { super(message); }
 }
 export interface AccountTranslationSelection { userId: string; provider: string; model: string; revision: string }
+function translationFailure(response: Response, message: string): Error {
+  const header = response.headers.get('retry-after')?.trim();
+  const delay = header ? (/^\d+(?:\.\d+)?$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now()) : 0;
+  return Object.assign(new Error(message), { status: response.status, retryAfterMs: Number.isFinite(delay) ? Math.max(0, delay) : 0 });
+}
 let translationDiscovery: Promise<AccountTranslationSelection> | undefined;
 export function getAccountTranslationSelection(): Promise<AccountTranslationSelection> {
   // Coalesce concurrent lookups without caching across later requests or admin switches.
@@ -112,7 +117,7 @@ export function getAccountTranslationSelection(): Promise<AccountTranslationSele
     const payload = await response.json() as { code?: number; message?: string; data?: AccountTranslationSelection };
     if (response.status === 401) await signedOut();
     if (!response.ok || payload.code !== 0 || !payload.data?.userId || !/^[a-f0-9]{64}$/.test(payload.data.revision)) {
-      throw new Error(payload.message || '字幕翻译暂不可用，请先登录 Tubitle 并确认服务已启用');
+      throw translationFailure(response, payload.message || '字幕翻译暂不可用，请先登录 Tubitle 并确认服务已启用');
     }
     return payload.data;
   })().finally(() => { translationDiscovery = undefined; });
@@ -122,7 +127,7 @@ export async function requestAccountTranslation(text: string, source: string, ta
   const response = await request('translation', { text, ...(source ? { source } : {}), target, expectedRevision: selection.revision }, selection.userId, signal);
   const payload = await response.json() as { code?: number; message?: string; data?: { translation?: string; revision?: string } };
   if (response.status === 401) await signedOut();
-  if (!response.ok || payload.code !== 0) throw new Error(payload.message || '字幕翻译暂不可用，请稍后重试');
+  if (!response.ok || payload.code !== 0) throw translationFailure(response, payload.message || '字幕翻译暂不可用，请稍后重试');
   if (payload.data?.revision !== selection.revision || typeof payload.data.translation !== 'string' || !payload.data.translation.trim()) throw new Error('翻译配置已切换或译文无效，请重新请求');
   if ((await refreshAccount())?.userId !== selection.userId) throw new Error('账户已切换，请重新请求翻译');
   signal?.throwIfAborted();
@@ -132,6 +137,23 @@ export async function requestAccountAnalysis(sentence: string, requestId: string
   const account = await refreshAccount();
   if (!account) throw new AnalysisAccessError('请先登录 Tubitle 后使用 AI 解析', 'LOGIN_REQUIRED', `${TUBITLE_SITE_URL}/zh/sign-in`);
   const response = await request('analysis', { sentence, requestId }, account.userId, signal);
+  if (response.ok && response.headers.get('content-type')?.includes('text/event-stream') && response.body) {
+    try {
+      if ((await refreshAccount())?.userId !== account.userId) throw new Error('账户已切换，请重新发起解析');
+    } catch (error) { await response.body.cancel(); throw error; }
+    const reader = response.body.getReader();
+    return new Response(new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          // Gate completion/history on the account still owning this request.
+          if ((await refreshAccount())?.userId !== account.userId) throw new Error('账户已切换，请重新发起解析');
+          controller.close();
+        } else controller.enqueue(chunk.value);
+      },
+      cancel(reason) { return reader.cancel(reason); },
+    }), { headers: response.headers });
+  }
   const payload = await response.json() as { code?: number; message?: string; data?: { reason?: string; choices?: unknown } };
   if (!response.ok || payload.code !== 0) {
     if (response.status === 401) await signedOut();

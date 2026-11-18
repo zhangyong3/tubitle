@@ -17,18 +17,17 @@ export function prefetchBatchPlan(
   currentIndex: number,
   totalSentences: number,
   previous?: PrefetchBatchState,
-  batchSize = 15,
-  refillRatio = 0.4
-): { indexes: number[]; state: PrefetchBatchState } {
-  const size = Math.max(1, batchSize);
-  const refillThreshold = Math.ceil(size * Math.min(1, Math.max(0, refillRatio)));
-  const reset = !previous || currentIndex < previous.lastIndex || currentIndex >= previous.cursor;
+  options: { busy?: boolean; initialSize?: number; incrementSize?: number; refillThreshold?: number } = {}
+): { indexes: number[]; state: PrefetchBatchState; reset: boolean } {
+  const { initialSize = 15, incrementSize = 5, refillThreshold = 5 } = options;
+  const reset = !previous || currentIndex < previous.lastIndex || currentIndex > previous.lastIndex + 1 || currentIndex >= previous.cursor;
   const start = Math.max(0, reset ? currentIndex : previous.cursor);
-  const shouldRefill = start - currentIndex <= refillThreshold;
-  const batches = reset || shouldRefill ? 1 : 0;
-  const end = Math.min(totalSentences, start + batches * size);
+  const count = reset ? Math.max(1, initialSize) : options.busy ? 0
+    : start - currentIndex <= refillThreshold ? Math.max(1, incrementSize) : 0;
+  const end = Math.min(totalSentences, start + count);
   return {
     indexes: Array.from({ length: Math.max(0, end - start) }, (_, offset) => start + offset),
-    state: { cursor: end, lastIndex: currentIndex }
+    state: { cursor: end, lastIndex: currentIndex },
+    reset,
   };
 }

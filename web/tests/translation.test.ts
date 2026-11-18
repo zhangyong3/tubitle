@@ -96,13 +96,13 @@ test('Microsoft maps languages and region and sanitizes errors', async () => {
   );
   assert.equal(calls, 1);
   globalThis.fetch = async () =>
-    new Response('private-upstream-diagnostic', { status: 429 });
+    new Response('private-upstream-diagnostic', { status: 429, headers: { 'retry-after': '12' } });
   await assert.rejects(
     translate(config, input, selection),
     (error) =>
       error instanceof Error &&
       !error.message.includes('private-upstream') &&
-      (error as any).status === 429
+      (error as any).status === 429 && (error as any).retryAfterMs === 12000
   );
 });
 
@@ -342,4 +342,9 @@ test('API authenticates accounts, rejects stale revisions and never falls back',
     503
   );
   assert.equal(calls, 2);
+  globalThis.fetch = async () => new Response('private limit details', {status:429, headers:{'retry-after':'12'}});
+  const limited = await send({ ...body, expectedRevision: current.data.revision });
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get('retry-after'), '12');
+  assert.ok(!(await limited.text()).includes('private limit details'));
 });

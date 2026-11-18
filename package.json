@@ -19,6 +19,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "esbuild": "^0.28.2",
+    "fake-indexeddb": "^6.2.8",
     "typescript": "^5.9.0",
     "vitest": "^5.0.0"
   }

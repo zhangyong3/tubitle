@@ -1,3 +1,4 @@
+import { readAnalysisResponse } from "./shared/read-analysis";
 import { requestSentenceAnalysis } from "./analysis-provider";
 import { AnalysisAccessError, enqueueLearning, flushLearning, syncStatus, getAccountTranslationSelection, requestAccountTranslation, type AccountTranslationSelection } from "./learning-sync";
 import { pruneSidebarHistory } from "./shared/sidebar-history";
@@ -22,7 +23,58 @@ interface TranslationJob {
 }
 
 const memoryCache = new Map<string, string>();
-const pending = new Map<string, Promise<string>>();
+interface PendingTranslation {
+  promise: Promise<string>; controller: AbortController; consumers: number;
+  complete: boolean; priority: "current" | "prefetch"; job?: TranslationJob;
+}
+const pending = new Map<string, PendingTranslation>();
+const cacheWrites = new Map<string, Promise<void>>();
+const MAX_MEMORY_TRANSLATIONS = 1000;
+
+function rememberTranslation(key: string, value: string): void {
+  memoryCache.delete(key);
+  memoryCache.set(key, value);
+  if (memoryCache.size > MAX_MEMORY_TRANSLATIONS) memoryCache.delete(memoryCache.keys().next().value!);
+}
+
+async function persistTranslation(key: string, value: string): Promise<void> {
+  let write = cacheWrites.get(key);
+  if (!write) {
+    write = cacheTranslation(key, value).catch(() => {
+      throw Object.assign(new Error('译文已获取，但本地缓存写入失败，请检查浏览器存储后重试'), { status: 507 });
+    }).finally(() => { cacheWrites.delete(key); });
+    cacheWrites.set(key, write);
+  }
+  await write;
+}
+
+function joinTranslation(group: PendingTranslation, signal?: AbortSignal): Promise<string> {
+  group.consumers++;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (done: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      group.consumers--;
+      if (!group.consumers && !group.complete) group.controller.abort();
+      done();
+    };
+    const abort = () => finish(() => reject(signal?.reason));
+    signal?.addEventListener('abort', abort, { once: true });
+    group.promise.then(value => finish(() => resolve(value)), error => finish(() => reject(error)));
+    if (signal?.aborted) abort();
+  });
+}
+
+function promoteTranslation(group: PendingTranslation, priority: "current" | "prefetch"): void {
+  if (priority !== 'current' || group.priority === 'current') return;
+  group.priority = 'current';
+  if (!group.job) return;
+  group.job.priority = 'current';
+  const index = queue.indexOf(group.job);
+  if (index >= 0) { queue.splice(index, 1); queue.unshift(group.job); void drainTranslationQueue(); }
+}
 const queue: TranslationJob[] = [];
 let activeTranslations = 0;
 let localActiveTranslations = 0;
@@ -34,11 +86,20 @@ const MICROSOFT_MIN_INTERVAL_MS = 250;
 const MICROSOFT_CHARACTERS_PER_SECOND = 400;
 const MICROSOFT_RETRY_BUDGET_MS = 10_000;
 const TENCENT_REQUEST_INTERVAL_MS = 240;
-const LOCAL_TRANSLATION_SLOTS = 4;
+const LOCAL_TRANSLATION_SLOTS = 3;
 const tencentRateLimit = new SmoothRateLimit(TENCENT_REQUEST_INTERVAL_MS);
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "发生未知错误";
+}
+
+function translationErrorDetails(error: unknown): { status?: number; retryAfterMs?: number } {
+  if (!error || typeof error !== 'object') return {};
+  const detail = error as { status?: number; retryAfterMs?: number };
+  return {
+    ...(typeof detail.status === 'number' && Number.isFinite(detail.status) ? { status: detail.status } : {}),
+    ...(typeof detail.retryAfterMs === 'number' && Number.isFinite(detail.retryAfterMs) ? { retryAfterMs: detail.retryAfterMs } : {}),
+  };
 }
 
 function translationKey(provider: string, text: string, source: string, target: string): string {
@@ -135,28 +196,47 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
     : expectedModel ? `${provider}:${tubitleConnection(settings).origin}:${expectedModel}` : provider;
   const key = translationKey(cacheProvider, text, source, settings.targetLanguage);
   const memory = memoryCache.get(key);
-  if (memory) return memory;
-  const existing = signal ? undefined : pending.get(key);
-  if (existing) return existing;
-  const disk = await getCachedTranslation(key).catch(() => undefined);
+  if (memory) {
+    rememberTranslation(key, memory);
+    await persistTranslation(key, memory);
+    signal?.throwIfAborted();
+    return memory;
+  }
+  let existing = pending.get(key);
+  if (existing && !existing.controller.signal.aborted) {
+    promoteTranslation(existing, priority);
+    return joinTranslation(existing, signal);
+  }
+  let disk: string | undefined;
+  try { disk = await getCachedTranslation(key); }
+  catch { throw Object.assign(new Error('无法读取本地翻译缓存，请检查浏览器存储后重试'), { status: 507 }); }
   signal?.throwIfAborted();
-  if (disk) { memoryCache.set(key, disk); return disk; }
-  // Cancelable requests belong to one caption session. Do not tie another tab's
-  // result to this tab's abort signal. Completed translations still share the cache.
-  if (signal) return scheduleTranslation({ key, text, provider, priority, settings, source, signal, expectedModel, accountSelection });
-  const pendingAfterCacheLookup = pending.get(key);
-  if (pendingAfterCacheLookup) return pendingAfterCacheLookup;
-  const promise = scheduleTranslation({ key, text, provider, priority, settings, source, expectedModel, accountSelection }).finally(() => pending.delete(key));
-  pending.set(key, promise);
-  return promise;
+  if (disk) { rememberTranslation(key, disk); return disk; }
+  existing = pending.get(key);
+  if (existing && !existing.controller.signal.aborted) {
+    promoteTranslation(existing, priority);
+    return joinTranslation(existing, signal);
+  }
+  const controller = new AbortController();
+  const group: PendingTranslation = {
+    controller, consumers: 0, complete: false, priority,
+    promise: Promise.resolve().then(() => scheduleTranslation({ key, text, provider, priority: group.priority, settings, source, signal: controller.signal, expectedModel, accountSelection }, job => { group.job = job; }))
+      .finally(() => {
+        group.complete = true;
+        if (pending.get(key) === group) pending.delete(key);
+      }),
+  };
+  pending.set(key, group);
+  return joinTranslation(group, signal);
 }
 
-function scheduleTranslation(input: Omit<TranslationJob, "resolve" | "reject">): Promise<string> {
+function scheduleTranslation(input: Omit<TranslationJob, "resolve" | "reject">, onQueued?: (job: TranslationJob) => void): Promise<string> {
   const signal = input.signal;
   let abort: (() => void) | undefined;
   return new Promise<string>((resolve, reject) => {
     signal?.throwIfAborted();
     const job: TranslationJob = { ...input, resolve, reject };
+    onQueued?.(job);
     abort = () => {
       const index = queue.indexOf(job);
       if (index >= 0) queue.splice(index, 1);
@@ -187,11 +267,11 @@ async function drainTranslationQueue(): Promise<void> {
     if (microsoft) microsoftActive = true;
     else if (local) localActiveTranslations += 1;
     else activeTranslations += 1;
-    void runTranslation(job).then((translation) => {
+    void runTranslation(job).then(async (translation) => {
       job.signal?.throwIfAborted();
       if (job.key !== undefined) {
-        memoryCache.set(job.key, translation);
-        void cacheTranslation(job.key, translation).catch(() => undefined);
+        rememberTranslation(job.key, translation);
+        await persistTranslation(job.key, translation);
       }
       job.resolve(translation);
     }).catch(job.reject).finally(() => {
@@ -257,7 +337,7 @@ chrome.runtime.onConnect.addListener((port) => {
       if (started || message.type !== "TRANSLATE") return;
       started = true;
       void enqueueTranslation(message.text, message.provider, message.priority, message.sourceLanguage, controller.signal)
-        .then((data) => reply({ ok: true, data }), (error: unknown) => reply({ ok: false, error: errorMessage(error) }));
+        .then((data) => reply({ ok: true, data }), (error: unknown) => reply({ ok: false, error: errorMessage(error), ...translationErrorDetails(error) }));
     });
     return;
   }
@@ -269,38 +349,18 @@ chrome.runtime.onConnect.addListener((port) => {
     if (!message.sentence || controller) return;
     controller = new AbortController();
     void streamAnalysis(message.sentence, message.requestId || crypto.randomUUID(), controller.signal, (payload) => port.postMessage(payload))
-      .catch((error) => port.postMessage({ error: errorMessage(error), ...(error instanceof AnalysisAccessError ? { reason: error.reason, actionUrl: error.actionUrl } : {}) }))
+      .catch((error) => {
+        if (controller?.signal.aborted) return;
+        try { port.postMessage({ error: errorMessage(error), ...(error instanceof AnalysisAccessError ? { reason: error.reason, actionUrl: error.actionUrl } : {}) }); }
+        catch { controller?.abort(); }
+      })
       .finally(() => { try { port.disconnect(); } catch { /* already closed */ } });
   });
 });
 
 async function streamAnalysis(sentence: string, requestId: string, signal: AbortSignal, emit: (payload: { delta?: string; done?: boolean }) => void): Promise<void> {
   const response = await requestSentenceAnalysis(sentence, requestId, await getSettings(), signal);
-  if (!response.body) throw new Error("大模型没有返回可读数据流");
-  if (!response.headers.get("content-type")?.includes("text/event-stream")) {
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const content = payload.choices?.[0]?.message?.content;
-    if (!content) throw new Error("大模型返回了空结果");
-    emit({ delta: content }); emit({ done: true }); return;
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (!signal.aborted) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
-    const events = buffer.split("\n\n");
-    buffer = events.pop() ?? "";
-    for (const event of events) for (const line of event.split("\n")) {
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      const payload = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
-      const delta = payload.choices?.[0]?.delta?.content;
-      if (delta) emit({ delta });
-    }
-    if (done) break;
-  }
+  await readAnalysisResponse(response, (delta) => emit({ delta }), signal);
   emit({ done: true });
 }
 

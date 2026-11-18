@@ -1,3 +1,4 @@
+import { PrefetchQueue } from "./prefetch-queue";
 import { initializeI18n, subscribeUiLanguage } from "../shared/i18n";
 import { historyNavigationAction } from "../shared/history-navigation";
 import { decodeTextEntities } from "../shared/text-entities";
@@ -46,14 +47,20 @@ const translations = new Map<string, string>();
 const officialTranslations = new Map<string, string>();
 const translationErrors = new Map<string, string>();
 const pendingTranslations = new Map<string, Promise<string>>();
-const queuedTranslationKeys = new Set<string>();
-const translationQueue: Array<{ sentence: CaptionSentence; provider: ExtensionSettings["provider"]; key: string }> = [];
-const prefetchBlockedUntil = new Map<ExtensionSettings["provider"], number>();
 const prefetchStateByProvider = new Map<ExtensionSettings["provider"], PrefetchBatchState>();
-const TRANSLATION_BATCH_SIZE = 15;
-const PREFETCH_REFILL_RATIO = 0.4;
-const MAX_TRANSLATION_WORKERS = 15;
-let activeTranslationWorkers = 0;
+type PrefetchItem = { sentence: CaptionSentence; provider: ExtensionSettings["provider"]; signal: AbortSignal; version: number };
+const prefetchQueue = new PrefetchQueue<PrefetchItem>({
+  async run(item) {
+    if (item.signal.aborted || item.signal !== captionSession?.signal || !isCurrentCaptionLoad(item.version)) return;
+    await getSentenceTranslation(item.sentence, item.provider);
+  },
+  onError(item, error) {
+    if (item.signal.aborted || !isCurrentCaptionLoad(item.version)) return;
+    translationErrors.set(item.sentence.id, errorMessage(error));
+    learningPanel.setTranslation(item.sentence.id, undefined, errorMessage(error));
+  },
+  onIdle() { if (activeIndex >= 0) scheduleTranslationPrefetch(activeIndex); },
+});
 
 const nativeCaptionStyle = document.createElement("style");
 nativeCaptionStyle.id = "tubetitle-hide-native-captions";
@@ -192,8 +199,7 @@ function resetCaptionData(): void {
   translations.clear();
   officialTranslations.clear();
   translationErrors.clear();
-  translationQueue.length = 0;
-  queuedTranslationKeys.clear();
+  prefetchQueue.clear();
   prefetchStateByProvider.clear();
   overlay.hideSentence();
   overlay.clearStatus();
@@ -359,80 +365,29 @@ async function translateSentence(sentence: CaptionSentence): Promise<void> {
 }
 
 function scheduleTranslationPrefetch(currentIndex: number): void {
-  if (!captionSession || positionPending) return;
-  const provider = settings.provider;
-  if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
-  const plan = prefetchBatchPlan(
-    currentIndex,
-    sentences.length,
-    prefetchStateByProvider.get(provider),
-    TRANSLATION_BATCH_SIZE,
-    PREFETCH_REFILL_RATIO
-  );
-  prefetchStateByProvider.set(provider, plan.state);
-  const indexes = plan.indexes;
-  for (const index of indexes) {
-    const sentence = sentences[index]!;
-    if (skipSentenceTranslation(sentence)) continue;
-    const key = translationKey(sentence, provider);
-    if (
-      officialTranslations.has(sentence.id) ||
-      translations.has(key) ||
-      pendingTranslations.has(key) ||
-      queuedTranslationKeys.has(key)
-    ) continue;
-    translationQueue.push({ sentence, provider, key });
-    queuedTranslationKeys.add(key);
-  }
-  drainTranslationQueue();
-}
-
-function prefetchCaptionIndexes(indexes: number[]): void {
   if (!captionSession || positionPending || isReviewingFinishedVideo()) return;
   const provider = settings.provider;
-  if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
-  for (const index of new Set(indexes)) {
-    const sentence = sentences[index];
-    if (!sentence || skipSentenceTranslation(sentence)) continue;
-    const official = officialTranslations.get(sentence.id);
-    if (official) continue;
-    const key = translationKey(sentence, provider);
-    if (translations.has(key)) continue;
-    if (pendingTranslations.has(key) || queuedTranslationKeys.has(key)) continue;
-    translationQueue.push({ sentence, provider, key });
-    queuedTranslationKeys.add(key);
-  }
-  drainTranslationQueue();
+  const previous = prefetchStateByProvider.get(provider);
+  const plan = prefetchBatchPlan(currentIndex, sentences.length, previous, { busy: !prefetchQueue.idle });
+  if (plan.reset) prefetchQueue.clear(false);
+  prefetchStateByProvider.set(provider, plan.state);
+  prefetchCaptionIndexes(plan.indexes, true);
 }
 
-function drainTranslationQueue(): void {
-  const signal = captionSession?.signal;
-  if (!signal) return;
-  const version = loadVersion;
-  while (activeTranslationWorkers < MAX_TRANSLATION_WORKERS && translationQueue.length > 0) {
-    const item = translationQueue.shift()!;
-    queuedTranslationKeys.delete(item.key);
-    if (skipSentenceTranslation(item.sentence) || (prefetchBlockedUntil.get(item.provider) ?? 0) > Date.now()) continue;
-    activeTranslationWorkers += 1;
-    void getSentenceTranslation(item.sentence, item.provider)
-      .catch((error: unknown) => {
-        if (signal.aborted || !isCurrentCaptionLoad(version)) return;
-        const message = errorMessage(error);
-        translationErrors.set(item.sentence.id, message);
-        learningPanel.setTranslation(item.sentence.id, undefined, message);
-        prefetchBlockedUntil.set(item.provider, Date.now() + 30_000);
-        for (let index = translationQueue.length - 1; index >= 0; index -= 1) {
-          const queued = translationQueue[index]!;
-          if (queued.provider === item.provider) {
-            queuedTranslationKeys.delete(queued.key);
-            translationQueue.splice(index, 1);
-          }
-        }
-      })
-      .finally(() => {
-        activeTranslationWorkers -= 1;
-        drainTranslationQueue();
-      });
+function prefetchCaptionIndexes(indexes: number[], planned = false): void {
+  if (!captionSession || positionPending || isReviewingFinishedVideo()) return;
+  const provider = settings.provider;
+  const window = prefetchStateByProvider.get(provider);
+  for (const index of new Set(indexes)) {
+    // Scrolling the panel must not silently grow the playback prefetch window.
+    // A user can still explicitly translate any sentence using its study button.
+    if (!planned && (!window || index < activeIndex || index >= window.cursor)) continue;
+    const sentence = sentences[index];
+    if (!sentence || skipSentenceTranslation(sentence) || officialTranslations.has(sentence.id)) continue;
+    if (!planned && translationErrors.has(sentence.id)) continue;
+    const key = translationKey(sentence, provider);
+    if (translations.has(key) || pendingTranslations.has(key) || prefetchQueue.has(key)) continue;
+    if (!prefetchQueue.add(key, { sentence, provider, signal: captionSession.signal, version: loadVersion })) break;
   }
 }
 
@@ -556,8 +511,7 @@ function stopCaptionSession(): void {
   captionSession?.abort();
   captionSession = undefined;
   pendingTranslations.clear();
-  translationQueue.length = 0;
-  queuedTranslationKeys.clear();
+  prefetchQueue.clear();
   prefetchStateByProvider.clear();
   activeIndex = -1;
 }
@@ -687,9 +641,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       settings.tencentRegion !== next.tencentRegion ||
       settings.tencentConcurrency !== next.tencentConcurrency;
     if (connectionChanged) {
-      translationQueue.length = 0;
-      queuedTranslationKeys.clear();
-      prefetchBlockedUntil.clear();
+      prefetchQueue.clear();
       prefetchStateByProvider.clear();
       translationErrors.clear();
     }

@@ -78,7 +78,10 @@ export async function handleExtensionTranslation(request: Request) {
     if (error instanceof TranslationError)
       return respJson(-1, error.message, undefined, {
         status: error.status,
-        headers,
+        headers: {
+          ...headers,
+          ...(error.retryAfterMs > 0 ? { 'retry-after': String(Math.ceil(error.retryAfterMs / 1000)) } : {}),
+        },
       });
     const invalid =
       error instanceof SyntaxError ||

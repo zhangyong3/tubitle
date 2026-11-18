@@ -246,10 +246,6 @@ function App() {
   useEffect(() => { const timer = window.setInterval(() => setHistoryClock(Date.now()), 60000); return () => window.clearInterval(timer); }, []);
   const [historyRetentionDays, setHistoryRetentionDays] = useState(DEFAULT_HISTORY_RETENTION_DAYS);
   const analysisController = useRef<AbortController | undefined>(undefined);
-  const typewriterQueue = useRef("");
-  const typewriterTimer = useRef<number | undefined>(undefined);
-  const upstreamFinished = useRef(false);
-  const upstreamError = useRef("");
   const upstreamText = useRef("");
   const historyRetentionDaysRef = useRef(DEFAULT_HISTORY_RETENTION_DAYS);
 
@@ -312,8 +308,6 @@ function App() {
   function stopAnalysisStream() {
     analysisController.current?.abort();
     analysisController.current = undefined;
-    if (typewriterTimer.current !== undefined) window.clearInterval(typewriterTimer.current);
-    typewriterTimer.current = undefined;
   }
 
   function analyze(query: AnalysisQuery) {
@@ -326,40 +320,21 @@ function App() {
     setAnalysisAction({});
     setAnalysisStatus("streaming");
     setCopyStatus("复制到笔记");
-    typewriterQueue.current = "";
-    upstreamFinished.current = false;
-    upstreamError.current = "";
     upstreamText.current = "";
     const controller = new AbortController();
     analysisController.current = controller;
-    typewriterTimer.current = window.setInterval(() => {
-      if (typewriterQueue.current) {
-        const count = typewriterQueue.current.length > 80 ? 3 : 1;
-        const next = typewriterQueue.current.slice(0, count);
-        typewriterQueue.current = typewriterQueue.current.slice(count);
-        setAnalysisText((current) => current + next);
-      } else if (upstreamFinished.current) {
-        if (typewriterTimer.current !== undefined) window.clearInterval(typewriterTimer.current);
-        typewriterTimer.current = undefined;
-        if (upstreamError.current) {
-          setAnalysisError(upstreamError.current);
-          setAnalysisStatus("error");
-        } else {
-          setAnalysisStatus("done");
-        }
-      }
-    }, 18);
     void streamSentenceAnalysis(
       query.sentence,
       (delta) => {
-        typewriterQueue.current += delta;
+        if (controller.signal.aborted || analysisController.current !== controller) return;
+        setAnalysisText((current) => current + delta);
         upstreamText.current += delta;
       },
       controller.signal,
       query.requestId
     ).then(() => {
       if (analysisController.current !== controller) return;
-      upstreamFinished.current = true;
+      setAnalysisStatus("done");
       void sendMessage({ type: "LEARNING_SYNC_ENQUEUE", record: {
         clientRecordId: `analysis-${query.requestId}`, kind: "sentence", text: query.sentence,
         analysis: upstreamText.current, videoId: query.videoId || "", videoTitle: query.videoTitle,
@@ -369,8 +344,8 @@ function App() {
     }).catch((error: unknown) => {
       if (controller.signal.aborted || analysisController.current !== controller) return;
       setAnalysisAction(error instanceof Error ? error as Error & {reason?: string; actionUrl?: string} : {});
-      upstreamError.current = error instanceof Error ? error.message : String(error);
-      upstreamFinished.current = true;
+      setAnalysisError(error instanceof Error ? error.message : String(error));
+      setAnalysisStatus("error");
     });
   }
 
@@ -509,9 +484,6 @@ function App() {
 
   function openSavedAnalysis(entry: Exclude<SidebarHistoryEntry, { type: "dictionary" }>) {
     stopAnalysisStream();
-    typewriterQueue.current = "";
-    upstreamFinished.current = true;
-    upstreamError.current = "";
     upstreamText.current = entry.result;
     setActiveTab("analysis");
     setSavedTranslation(entry.type === "translation");
@@ -577,7 +549,7 @@ function App() {
           {analysisAction.reason === "QUOTA_EXHAUSTED" && analysisAction.actionUrl && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl })}>{t("查看 / 升级套餐")}</button>}
         </div>}
         <div className={`analysis-progress ${analysisStatus}`}>
-          {analysisStatus === "streaming" ? t("大模型正在生成，内容会实时显示…") : analysisStatus === "done" ? t("解析完成") : t("解析未完整完成")}
+          {analysisStatus === "streaming" ? (analysisText ? t("大模型正在生成，内容会实时显示…") : t("正在获取解析…")) : analysisStatus === "done" ? t("解析完成") : t("解析未完整完成")}
         </div>
         </main>
       </div>

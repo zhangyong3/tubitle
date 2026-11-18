@@ -142,4 +142,4 @@ export type ExtensionMessage =
 
 export type MessageResponse<T = unknown> =
   | { ok: true; data: T }
-  | { ok: false; error: string };
+  | { ok: false; error: string; status?: number; retryAfterMs?: number };

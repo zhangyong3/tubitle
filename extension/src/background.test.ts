@@ -11,9 +11,10 @@ vi.mock("./learning-sync", () => ({
   enqueueLearning: async () => undefined, requestAccountAnalysis: vi.fn(), AnalysisAccessError: class extends Error {},
 }));
 
+const cache = vi.hoisted(() => ({ rows: new Map<string, string>(), read: vi.fn(), write: vi.fn() }));
 vi.mock("./background-cache", () => ({
-  getCachedTranslation: async () => undefined,
-  cacheTranslation: async () => undefined
+  getCachedTranslation: cache.read,
+  cacheTranslation: cache.write,
 }));
 
 const translated = () => Response.json([{ translations: [{ text: "译文" }] }]);
@@ -28,6 +29,9 @@ describe("subtitle translation from the extension background", () => {
 
   beforeEach(async () => {
     mode = "custom";
+    cache.rows.clear();
+    cache.read.mockReset().mockImplementation(async (key: string) => cache.rows.get(key));
+    cache.write.mockReset().mockImplementation(async (key: string, value: string) => { cache.rows.set(key, value); });
     vi.useFakeTimers();
     vi.resetModules();
     request.mockReset().mockImplementation(async () => translated());
@@ -179,17 +183,24 @@ describe("subtitle translation from the extension background", () => {
     });
     const pending = [local("First."), local("Second."), local("Third."), local("Fourth.")];
     await vi.advanceTimersByTimeAsync(0);
-    expect(translations()).toHaveLength(3);
+    expect(translations()).toHaveLength(2);
     const current = local("On screen now.", "current");
     await vi.advanceTimersByTimeAsync(0);
-    expect(translations()).toHaveLength(4);
-    expect(translations()[3]?.[0]).toBe("http://127.0.0.1:3100/api/extension/translation");
-    expect(JSON.parse(String(translations()[3]?.[1]?.body))).toEqual({ text: "On screen now.", target: "zh", source: "en", expectedRevision: "a".repeat(64) });
+    expect(translations()).toHaveLength(3);
+    expect(translations()[2]?.[0]).toBe("http://127.0.0.1:3100/api/extension/translation");
+    expect(JSON.parse(String(translations()[2]?.[1]?.body))).toEqual({ text: "On screen now.", target: "zh", source: "en", expectedRevision: "a".repeat(64) });
     finish.slice().forEach((resolve) => resolve());
     await vi.advanceTimersByTimeAsync(0);
     expect(translations()).toHaveLength(5);
-    finish[4]!();
+    finish.slice(3).forEach(resolve => resolve());
     await expect(Promise.all([...pending, current])).resolves.toEqual(Array(5).fill({ ok: true, data: "本机译文" }));
+  });
+
+  it("preserves rate-limit status and delay through the subtitle port", async () => {
+    mode = "tubitle";
+    platform.translate.mockRejectedValue(Object.assign(new Error('limited'), { status: 429, retryAfterMs: 12000 }));
+    const result = requestSubtitleTranslation({ type: 'TRANSLATE', provider: 'hy-mt-local', text: 'Limited subtitle.' }, new AbortController().signal);
+    await expect(result).rejects.toMatchObject({ status: 429, retryAfterMs: 12000 });
   });
 
   it("routes default-mode subtitles to Tubitle even when a caller passes Microsoft", async () => {
@@ -219,4 +230,94 @@ describe("subtitle translation from the extension background", () => {
     await expect(local()).resolves.toEqual({ ok: true, data: model });
     expect(request.mock.calls.filter(([url]) => String(url).endsWith("/api/extension/translation"))).toHaveLength(3);
   });
+  it("does not acknowledge a translation until its browser cache transaction completes", async () => {
+    let commit!: () => void;
+    cache.write.mockImplementation(() => new Promise<void>(resolve => { commit = resolve; }));
+    let answered = false;
+    const result = subtitle('Persist before replying.').then(value => { answered = true; return value; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cache.write).toHaveBeenCalledOnce();
+    expect(answered).toBe(false);
+    commit();
+    await expect(result).resolves.toEqual({ok:true, data:'译文'});
+  });
+
+  it("reuses persistent translations after a service worker restart without another supplier request", async () => {
+    mode = 'tubitle';
+    request.mockResolvedValue(Response.json({translation:'持久译文'}));
+    await expect(subtitle('Refresh this video.')).resolves.toEqual({ok:true,data:'持久译文'});
+    expect(cache.rows.size).toBe(1);
+    vi.resetModules();
+    await import('./background');
+    request.mockClear();
+    await expect(subtitle('Refresh this video.')).resolves.toEqual({ok:true,data:'持久译文'});
+    expect(request).not.toHaveBeenCalled();
+    expect(platform.discover).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares identical in-flight subtitles across tabs while keeping cancellation independent", async () => {
+    mode = 'tubitle';
+    let finish!: () => void;
+    request.mockImplementation(() => new Promise<Response>(resolve => { finish = () => resolve(Response.json({translation:'共享译文'})); }));
+    const first = new AbortController();
+    const second = new AbortController();
+    const translate = (signal: AbortSignal) => requestSubtitleTranslation({type:'TRANSLATE',provider:'hy-mt-local',text:'Same subtitle in two tabs.'}, signal);
+    const one = translate(first.signal).catch(error => error);
+    const two = translate(second.signal);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(request).toHaveBeenCalledOnce();
+    first.abort();
+    await expect(one).resolves.toMatchObject({name:'AbortError'});
+    finish();
+    await expect(two).resolves.toBe('共享译文');
+    expect(cache.write).toHaveBeenCalledOnce();
+  });
+
+  it("reports storage failures and retries the saved in-memory result without paying for translation twice", async () => {
+    mode = 'tubitle';
+    request.mockResolvedValue(Response.json({translation:'等待落盘的译文'}));
+    cache.write.mockRejectedValueOnce(new Error('disk unavailable'));
+    await expect(subtitle('Keep the successful supplier result.')).resolves.toMatchObject({ok:false,error:expect.stringContaining('本地缓存写入失败')});
+    await expect(subtitle('Keep the successful supplier result.')).resolves.toEqual({ok:true,data:'等待落盘的译文'});
+    expect(request).toHaveBeenCalledOnce();
+    expect(cache.rows.size).toBe(1);
+  });
+
+  it("does not silently call the supplier when local cache lookup fails", async () => {
+    cache.read.mockRejectedValueOnce(new Error('database blocked'));
+    await expect(subtitle('Could already be cached.')).resolves.toMatchObject({ok:false,error:expect.stringContaining('无法读取本地翻译缓存')});
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("only aborts a shared supplier request after its last subscriber leaves", async () => {
+    mode = 'tubitle';
+    let upstreamSignal!: AbortSignal;
+    platform.translate.mockImplementation((_text, _source, _target, _selection, signal: AbortSignal) => {
+      upstreamSignal = signal;
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), {once:true}));
+    });
+    const first = new AbortController();
+    const second = new AbortController();
+    const translate = (signal: AbortSignal) => requestSubtitleTranslation({type:'TRANSLATE',provider:'hy-mt-local',text:'Cancel both subscribers.'}, signal).catch(error => error);
+    const one = translate(first.signal);
+    const two = translate(second.signal);
+    await vi.advanceTimersByTimeAsync(0);
+    first.abort();
+    expect(upstreamSignal.aborted).toBe(false);
+    second.abort();
+    expect(upstreamSignal.aborted).toBe(true);
+    await Promise.all([one, two]);
+    expect(cache.write).not.toHaveBeenCalled();
+  });
+
+  it("does not cache supplier failures as translations", async () => {
+    mode = 'tubitle';
+    platform.translate.mockRejectedValueOnce(new Error('supplier unavailable'));
+    await expect(subtitle('Retry a failed translation.')).resolves.toMatchObject({ok:false});
+    expect(cache.write).not.toHaveBeenCalled();
+    request.mockResolvedValue(Response.json({translation:'重试成功'}));
+    await expect(subtitle('Retry a failed translation.')).resolves.toEqual({ok:true,data:'重试成功'});
+    expect(platform.translate).toHaveBeenCalledTimes(2);
+  });
+
 });
