@@ -7,6 +7,7 @@ import { fetchBilingualCaptions } from "./captions";
 import { PageLearningPanel } from "./learning-panel";
 import { SubtitleOverlay } from "./overlay";
 import { prefetchBatchPlan, type PrefetchBatchState } from "./prefetch";
+import { CaptionPlaybackPosition } from "./playback-position";
 import { shortcutFromEvent, shortcutsMatch } from "./shortcuts";
 import { findSentenceIndex, navigationTargetIndex, type NavigationDirection } from "./navigation";
 import { requestSubtitleTranslation } from "../shared/subtitle-translation";
@@ -39,6 +40,8 @@ let panelLayoutFrame: number | undefined;
 let unavailableSubtitleTimer: number | undefined;
 let transcriptLoading = false;
 let transcriptError = "";
+const playbackPosition = new CaptionPlaybackPosition();
+let positionPending = false;
 const translations = new Map<string, string>();
 const officialTranslations = new Map<string, string>();
 const translationErrors = new Map<string, string>();
@@ -89,6 +92,7 @@ function transcriptSnapshot(video = videoElement()): TranscriptPanelSnapshot {
     currentTimeMs: (video?.currentTime ?? 0) * 1000,
     durationMs: Number.isFinite(video?.duration) ? (video?.duration ?? 0) * 1000 : 0,
     loading: transcriptLoading,
+    positionPending,
     error: transcriptError || undefined
   };
 }
@@ -148,7 +152,7 @@ function applySettings(): void {
   overlay.setAppearance(settings.subtitleAppearance);
   overlay.setPosition(settings.subtitlePosition);
   syncNativeCaptionStyle();
-  if (settings.showChinese && activeIndex >= 0) void translateSentence(sentences[activeIndex]!);
+  if (!positionPending && settings.showChinese && activeIndex >= 0) void translateSentence(sentences[activeIndex]!);
 }
 
 function requestTranscript(videoId: string, languageCode?: string): Promise<TranscriptCue[]> {
@@ -201,6 +205,8 @@ function syncCaptionVideo(): string | null {
   const videoId = watchVideoId();
   if (videoId === captionVideoId) return videoId;
   captionVideoId = videoId;
+  playbackPosition.reset(location.href);
+  positionPending = playbackPosition.pending;
   finishedVideo = undefined;
   latestTracks = [];
   pausedByHover = false;
@@ -254,6 +260,13 @@ async function loadTracks(tracks: CaptionTrack[], pageUrl = location.href): Prom
     transcriptLoading = false;
     applySettings();
     overlay.clearStatus();
+    // Publish the loaded transcript at its current position, rather than briefly
+    // exposing the top of the list to viewport prefetch before the next tick.
+    const video = videoElement();
+    if (captionSession && !positionPending && video && !video.seeking && video.readyState >= 2 &&
+        !document.querySelector("#movie_player.ad-showing, #movie_player.ad-interrupting")) {
+      activateSentence(findSentenceIndex(sentences, video.currentTime * 1000));
+    }
     publishTranscriptSnapshot();
   } catch (error) {
     if (!isCurrentCaptionLoad(version)) return;
@@ -287,7 +300,7 @@ async function getSentenceTranslation(
   userRequested = false
 ): Promise<string> {
   const signal = captionSession?.signal;
-  if (!signal || captionVideoId !== watchVideoId() || skipSentenceTranslation(sentence)) return "";
+  if (!signal || (!userRequested && positionPending) || captionVideoId !== watchVideoId() || skipSentenceTranslation(sentence)) return "";
   const version = loadVersion;
   const target = settings.targetLanguage;
   const official = officialTranslations.get(sentence.id);
@@ -346,7 +359,7 @@ async function translateSentence(sentence: CaptionSentence): Promise<void> {
 }
 
 function scheduleTranslationPrefetch(currentIndex: number): void {
-  if (!captionSession) return;
+  if (!captionSession || positionPending) return;
   const provider = settings.provider;
   if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
   const plan = prefetchBatchPlan(
@@ -375,7 +388,7 @@ function scheduleTranslationPrefetch(currentIndex: number): void {
 }
 
 function prefetchCaptionIndexes(indexes: number[]): void {
-  if (!captionSession || isReviewingFinishedVideo()) return;
+  if (!captionSession || positionPending || isReviewingFinishedVideo()) return;
   const provider = settings.provider;
   if ((prefetchBlockedUntil.get(provider) ?? 0) > Date.now()) return;
   for (const index of new Set(indexes)) {
@@ -613,6 +626,13 @@ function tick(timestamp: number): void {
   learningPanel.setVisible(panelVisible);
   if (captionSession || reviewing) {
     if (video) {
+      const wasPending = positionPending;
+      positionPending = !reviewing && !playbackPosition.ready(video, timestamp,
+        Boolean(document.querySelector("#movie_player.ad-showing, #movie_player.ad-interrupting")));
+      if (captionSession && !reviewing && !positionPending) {
+        activateSentence(findSentenceIndex(sentences, video.currentTime * 1000));
+      }
+      if (positionPending !== wasPending) publishTranscriptSnapshot();
       if (timestamp - lastLayoutUpdate >= 200) {
         const fullscreenParent = document.fullscreenElement;
         overlay.attachTo(fullscreenParent?.contains(video) ? fullscreenParent : document.documentElement);
@@ -620,12 +640,9 @@ function tick(timestamp: number): void {
         overlay.updateVideoBounds(bounds);
         if (panelVisible) {
           learningPanel.updateLayout(bounds, reviewing);
-          learningPanel.setActive(activeIndex, video.currentTime * 1000, Number.isFinite(video.duration) ? video.duration * 1000 : 0);
+          if (!positionPending) learningPanel.setActive(activeIndex, video.currentTime * 1000, Number.isFinite(video.duration) ? video.duration * 1000 : 0);
         }
         lastLayoutUpdate = timestamp;
-      }
-      if (captionSession && !reviewing) {
-        activateSentence(findSentenceIndex(sentences, video.currentTime * 1000));
       }
     }
   }

@@ -88,7 +88,8 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
 let lastSignature = "";
 function publishTracks(): void {
   const tracks = readTracks();
-  const signature = `${location.href}|${tracks.map((track) => track.baseUrl).join("|")}`;
+  const page = new URL(location.href);
+  const signature = `${page.pathname}|${page.searchParams.get("v")}|${JSON.stringify(tracks)}`;
   if (signature === lastSignature) return;
   lastSignature = signature;
   document.dispatchEvent(
@@ -97,7 +98,6 @@ function publishTracks(): void {
 }
 
 document.addEventListener("yt-navigate-finish", () => {
-  lastSignature = "";
   window.setTimeout(publishTracks, 250);
   window.setTimeout(publishTracks, 1200);
   window.setTimeout(publishTracks, 3000);

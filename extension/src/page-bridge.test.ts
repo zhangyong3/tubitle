@@ -2,6 +2,40 @@ import { afterEach, expect, it, vi } from "vitest";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("does not reload tracks when only the timestamp or other watch URL parameters change", async () => {
+  vi.resetModules();
+  const document = Object.assign(new EventTarget(), { getElementById: () => null });
+  const location = new URL("https://www.youtube.com/watch?v=current&t=1223s");
+  const track = { baseUrl: "https://www.youtube.com/api/timedtext?lang=en", languageCode: "en" };
+  let poll!: () => void;
+  const publish = vi.fn();
+  document.addEventListener("tubetitle:tracks", publish);
+  vi.stubGlobal("document", document);
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("window", {
+    ytInitialPlayerResponse: {
+      videoDetails: { videoId: "current" },
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [track] } }
+    },
+    setInterval: (callback: () => void) => { poll = callback; },
+    setTimeout: (callback: () => void) => { callback(); }
+  });
+  await import("./page-bridge");
+  poll();
+  location.search = "?v=current&t=1224s&feature=share";
+  poll();
+  document.dispatchEvent(new Event("yt-navigate-finish"));
+  expect(publish).toHaveBeenCalledOnce();
+  track.baseUrl += "&updated=1";
+  poll();
+  expect(publish).toHaveBeenCalledTimes(2);
+  document.dispatchEvent(new Event("tubetitle:request-tracks"));
+  expect(publish).toHaveBeenCalledTimes(3);
+  location.search = "?v=next";
+  poll();
+  expect(publish).toHaveBeenCalledTimes(4);
+});
+
 it.each([
   ["no transcript", 200, false],
   ["unavailable metadata", 503, false],

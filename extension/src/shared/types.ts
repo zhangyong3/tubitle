@@ -100,6 +100,7 @@ export interface TranscriptPanelSnapshot {
   currentTimeMs: number;
   durationMs: number;
   loading: boolean;
+  positionPending?: boolean;
   error?: string;
 }
 

@@ -5,6 +5,8 @@ const fixture = vi.hoisted(() => ({
   setPanelVisible: vi.fn(),
   setPlaybackActive: vi.fn(),
   setSnapshot: vi.fn(),
+  setActive: vi.fn(),
+  prefetchVisible: undefined as ((indexes: number[]) => void) | undefined,
   setTranslation: vi.fn(),
   openTab: vi.fn(),
   fetchCaptions: vi.fn(),
@@ -34,11 +36,14 @@ vi.mock("./overlay", () => ({
 }));
 vi.mock("./learning-panel", () => ({
   PageLearningPanel: class {
+    constructor(handlers: { onPrefetch: (indexes: number[]) => void }) {
+      fixture.prefetchVisible = handlers.onPrefetch;
+    }
     setVisible = fixture.setPanelVisible;
     setPlaybackActive = fixture.setPlaybackActive;
     setSnapshot = fixture.setSnapshot;
     openTab = fixture.openTab;
-    setActive() {}
+    setActive = fixture.setActive;
     setTranslation = fixture.setTranslation;
     updateLayout() {}
   }
@@ -53,7 +58,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const captions = () => ({ sentences: fixture.sentences, officialTranslations: new Map(), sourceLanguage: "en" });
 
-async function openFixture() {
+async function openFixture(url = "https://www.youtube.com/watch?v=test") {
   vi.resetModules();
   vi.clearAllMocks();
   fixture.fetchCaptions.mockImplementation(async () => captions());
@@ -74,11 +79,11 @@ async function openFixture() {
       selector.startsWith("video") ? video : null
   });
   let nextFrame: FrameRequestCallback;
-  const tick = () => nextFrame(250);
+  const tick = (timestamp = 250) => nextFrame(timestamp);
   fixture.sendTranslation.mockImplementation(() => new Promise(() => {}));
   vi.stubGlobal("document", document);
   vi.stubGlobal("window", Object.assign(new EventTarget(), { setTimeout, clearTimeout }));
-  const location = new URL("https://www.youtube.com/watch?v=test");
+  const location = new URL(url);
   vi.stubGlobal("location", location);
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { nextFrame = callback; });
   vi.stubGlobal("MutationObserver", class { observe() {} disconnect() {} });
@@ -104,6 +109,47 @@ async function openFixture() {
   };
   return { tick, location, document, video, button, publishTracks, endPlayback, setPressed: (value: string) => { pressed = value; } };
 }
+
+it("waits for a timestamp link to settle before following or translating captions", async () => {
+  const { tick, video, setPressed } = await openFixture("https://www.youtube.com/watch?v=test&t=1223s");
+  video.duration = 1800;
+  fixture.sentences.push({ id: "target", text: "The linked sentence.", startMs: 1223000, endMs: 1225000 });
+  try {
+    setPressed("true");
+    tick();
+    fixture.prefetchVisible?.([0, 1]);
+    expect(fixture.sendTranslation).not.toHaveBeenCalled();
+    expect(fixture.setActive.mock.calls.every(([index]) => index === -1)).toBe(true);
+
+    video.currentTime = 1223;
+    video.seeking = true;
+    tick();
+    video.currentTime = 0.5;
+    tick();
+    fixture.prefetchVisible?.([0, 1]);
+    expect(fixture.sendTranslation).not.toHaveBeenCalled();
+
+    video.currentTime = 1223;
+    video.seeking = false;
+    tick();
+    tick(600);
+    expect(fixture.sendTranslation.mock.calls.map(([request]) => request.text)).toEqual(["The linked sentence."]);
+    expect(fixture.setActive).toHaveBeenLastCalledWith(2, 1223000, 1800000);
+  } finally {
+    fixture.sentences.pop();
+  }
+});
+
+it("does not activate or translate intermediate captions during a seek", async () => {
+  const { tick, video, setPressed } = await openFixture();
+  setPressed("true");
+  video.seeking = true;
+  tick();
+  expect(fixture.sendTranslation).not.toHaveBeenCalled();
+  video.seeking = false;
+  tick();
+  expect(fixture.sendTranslation).toHaveBeenCalled();
+});
 
 it("follows the native CC button and gates subtitle translation until CC is on", async () => {
   const { tick, video, setPressed } = await openFixture();

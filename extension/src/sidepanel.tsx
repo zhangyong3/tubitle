@@ -781,6 +781,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
   useI18n();
   const listRef = useRef<HTMLOListElement>(null);
   const scrollFrame = useRef<number | undefined>(undefined);
+  const lastFollow = useRef<{ videoId: string; index: number } | undefined>(undefined);
   const activeIndex = snapshot?.activeIndex ?? -1;
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -800,7 +801,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
   }
 
   function requestVisibleTranslations() {
-    if (!visible) return;
+    if (!visible || snapshot?.positionPending) return;
     const list = listRef.current;
     if (!list || !snapshot?.sentences.length) return;
     const bounds = list.getBoundingClientRect();
@@ -815,13 +816,23 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
   }
 
   useEffect(() => {
-    if (!snapshot || !visible) return;
+    if (!snapshot || !visible || snapshot.positionPending) return;
     if (autoFollow && activeIndex >= 0) {
+      const previous = lastFollow.current;
+      const adjacent = previous?.videoId === snapshot.videoId && Math.abs(previous.index - activeIndex) === 1;
       listRef.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
-        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+        ?.scrollIntoView({ block: "center", behavior: adjacent ? "smooth" : "instant" });
+      lastFollow.current = { videoId: snapshot.videoId, index: activeIndex };
     }
-    window.setTimeout(requestVisibleTranslations, 0);
-  }, [snapshot?.videoId, snapshot?.sentences.length, activeIndex, autoFollow, visible]);
+    const frame = window.requestAnimationFrame(requestVisibleTranslations);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (scrollFrame.current !== undefined) {
+        window.cancelAnimationFrame(scrollFrame.current);
+        scrollFrame.current = undefined;
+      }
+    };
+  }, [snapshot?.videoId, snapshot?.sentences.length, snapshot?.positionPending, activeIndex, autoFollow, visible]);
 
   useEffect(() => () => {
     if (scrollFrame.current !== undefined) window.cancelAnimationFrame(scrollFrame.current);
