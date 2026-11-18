@@ -10,6 +10,9 @@ export type TranslationConfig = Record<string, string>;
 
 export const TRANSLATION_DEFAULTS: TranslationConfig = {
   translation_provider: 'disabled',
+  translation_guest_daily_limit: '100',
+  translation_free_daily_limit: '500',
+  translation_pro_daily_limit: '5000',
   translation_siliconflow_endpoint: 'https://api.siliconflow.cn/v1',
   translation_microsoft_endpoint:
     'https://api.cognitive.microsofttranslator.com',
@@ -50,6 +53,15 @@ export function validateTranslationConfig(values: TranslationConfig): void {
     throw new Error('不支持的翻译供应商');
   for (const [key, value] of Object.entries(config)) {
     if (key.endsWith('_endpoint') && value) translationEndpoint(value);
+  }
+  for (const plan of ['guest', 'free', 'pro']) {
+    const value = config[`translation_${plan}_daily_limit`];
+    if (
+      !/^\d+$/.test(value || '') ||
+      !Number.isSafeInteger(Number(value)) ||
+      Number(value) > 1_000_000
+    )
+      throw new Error('每日字幕额度须为 0 到 1000000 的整数');
   }
   if (provider === 'disabled') return;
   const required: Record<Exclude<TranslationProvider, 'disabled'>, string[]> = {

@@ -132,6 +132,7 @@ export interface SentenceAnalysis {
 }
 
 export type ExtensionMessage =
+  | { type: "LEARNING_ACTIVITY"; activity: import("./learning-activity").LearningActivity }
   | { type: "LEARNING_SYNC_STATUS" }
   | { type: "LEARNING_SYNC_ENQUEUE"; record: import("./learning-sync").SyncRecord }
   | { type: "GET_SETTINGS" }

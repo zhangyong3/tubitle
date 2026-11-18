@@ -133,6 +133,17 @@ export const verification = table(
 
 // ─── Content ─────────────────────────────────────────────────────────────────
 
+// Only current daily counters, never subtitle text or per-request history.
+export const translationQuota = table(
+  'translation_quota',
+  {
+    id: text('id').primaryKey(),
+    day: text('day').notNull(),
+    used: integer('used').notNull().default(0),
+  },
+  (t) => [index('idx_translation_quota_day').on(t.day)]
+);
+
 export const config = table('config', {
   name: text('name').unique().notNull(),
   value: text('value'),

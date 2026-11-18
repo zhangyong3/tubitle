@@ -292,6 +292,19 @@ export function getSettingGroups(): SettingGroup[] {
 
 export function getSettings(): Setting[] {
   return [
+    ...(['guest', 'free', 'pro'] as const).map((plan) => ({
+      name: `translation_${plan}_daily_limit`,
+      title: {
+        guest: '匿名用户每日字幕句数（按 IP）',
+        free: '免费登录用户每日字幕句数',
+        pro: 'Pro 用户每日字幕句数',
+      }[plan],
+      type: 'number' as const,
+      group: 'translation',
+      tab: 'translation',
+      defaultValue: TRANSLATION_DEFAULTS[`translation_${plan}_daily_limit`],
+      tip: '每天北京时间 00:00 重置；0 表示关闭该类用户的翻译额度。',
+    })),
     {
       name: 'translation_provider',
       title: 'Active provider',

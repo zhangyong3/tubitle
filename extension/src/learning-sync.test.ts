@@ -165,3 +165,66 @@ describe('account analysis streaming', () => {
     await expect(response.text()).rejects.toThrow('账户已切换');
   });
 });
+
+describe('anonymous subtitle translation', () => {
+  it('accepts anonymous discovery and translations without a session or account header', async () => {
+    const selection = { userId: '', provider: 'microsoft', model: 'Translator/v3.0', revision: 'a'.repeat(64) };
+    request.mockImplementation(async (_url, init) => ok(init?.method === 'POST' ? { translation: '你好', revision: selection.revision } : selection));
+    const sync = await import('./learning-sync');
+    expect(await sync.getAccountTranslationSelection()).toEqual(selection);
+    expect(await sync.requestAccountTranslation('Hello', 'en', 'zh', selection)).toBe('你好');
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls[1]?.[1]?.headers).not.toHaveProperty('X-Tubitle-Account');
+  });
+});
+
+describe('daily learning totals in the account bar', () => {
+  it('attributes activity to the verified account and never backfills anonymous playback', async () => {
+    const sync = await import('./learning-sync');
+    const { learningDay } = await import('./shared/learning-activity');
+    const activity = { day: learningDay(), sentences: 3, durationMs: 15000 };
+    await sync.recordLearningActivity(activity);
+    account = { userId: 'alice', name: 'Alice' };
+    expect((await sync.syncStatus()).today).toEqual({ sentences: 0, durationMs: 0 });
+    await sync.recordLearningActivity(activity);
+    expect((await sync.syncStatus()).today).toEqual({ sentences: 3, durationMs: 15000 });
+    account = { userId: 'bob', name: 'Bob' };
+    expect((await sync.syncStatus()).today).toEqual({ sentences: 0, durationMs: 0 });
+    await sync.recordLearningActivity({ ...activity, sentences: 1 });
+    account = { userId: 'alice', name: 'Alice' };
+    expect((await sync.syncStatus()).today).toEqual({ sentences: 3, durationMs: 15000 });
+  });
+});
+
+it('does not clear a newly verified account when an older anonymous translation returns its quota error', async () => {
+  const sync = await import('./learning-sync');
+  account = { userId: 'alice', name: 'Alice' };
+  await sync.refreshAccount();
+  request.mockResolvedValue(Response.json({ code: -1, message: '今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度', data: { reason: 'LOGIN_REQUIRED' } }, { status: 401 }));
+  const guestSelection = { userId: '', provider: 'microsoft', model: 'Translator/v3.0', revision: 'a'.repeat(64) };
+  await expect(sync.requestAccountTranslation('Hello', 'en', 'zh', guestSelection)).rejects.toMatchObject({ status: 401 });
+  expect((stored[SYNC_STATE_KEY] as { account?: { userId: string } }).account?.userId).toBe('alice');
+});
+
+it('starts fresh account discovery after login while an anonymous discovery is still in flight', async () => {
+  const pending: Array<(response: Response) => void> = [];
+  request.mockImplementation(async (url) => String(url).endsWith('/translation')
+    ? new Promise<Response>(resolve => pending.push(resolve)) : ok(account));
+  const sync = await import('./learning-sync');
+  const old = sync.getAccountTranslationSelection();
+  await vi.waitFor(() => expect(pending).toHaveLength(1));
+  account = { userId: 'alice', name: 'Alice' };
+  await sync.refreshAccount();
+  const fresh = sync.getAccountTranslationSelection();
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  const selection = { userId: '', provider: 'microsoft', model: 'Translator/v3.0', revision: 'a'.repeat(64) };
+  pending[0]!(ok(selection));
+  await old;
+  const duplicate = sync.getAccountTranslationSelection();
+  // Let the second lookup reach the coalescing check before resolving it.
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(pending).toHaveLength(2);
+  pending[1]!(ok({ ...selection, userId: 'alice' }));
+  expect((await fresh).userId).toBe('alice');
+  expect((await duplicate).userId).toBe('alice');
+});

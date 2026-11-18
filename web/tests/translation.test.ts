@@ -96,13 +96,17 @@ test('Microsoft maps languages and region and sanitizes errors', async () => {
   );
   assert.equal(calls, 1);
   globalThis.fetch = async () =>
-    new Response('private-upstream-diagnostic', { status: 429, headers: { 'retry-after': '12' } });
+    new Response('private-upstream-diagnostic', {
+      status: 429,
+      headers: { 'retry-after': '12' },
+    });
   await assert.rejects(
     translate(config, input, selection),
     (error) =>
       error instanceof Error &&
       !error.message.includes('private-upstream') &&
-      (error as any).status === 429 && (error as any).retryAfterMs === 12000
+      (error as any).status === 429 &&
+      (error as any).retryAfterMs === 12000
   );
 });
 
@@ -342,9 +346,164 @@ test('API authenticates accounts, rejects stale revisions and never falls back',
     503
   );
   assert.equal(calls, 2);
-  globalThis.fetch = async () => new Response('private limit details', {status:429, headers:{'retry-after':'12'}});
-  const limited = await send({ ...body, expectedRevision: current.data.revision });
+  globalThis.fetch = async () =>
+    new Response('private limit details', {
+      status: 429,
+      headers: { 'retry-after': '12' },
+    });
+  const limited = await send({
+    ...body,
+    expectedRevision: current.data.revision,
+  });
   assert.equal(limited.status, 429);
   assert.equal(limited.headers.get('retry-after'), '12');
   assert.ok(!(await limited.text()).includes('private limit details'));
+});
+
+test('daily subtitle quotas aggregate identities without request history, reset and reject invalid settings', async () => {
+  const { consumeSubtitleQuota, subtitleIdentity, SubtitleQuotaError } =
+    await import('../src/server/translation/quota');
+  const { translationQuota } = await import('../src/config/db/schema');
+  const request = (ip: string) =>
+    new Request('http://localhost/api/extension/translation', {
+      headers: { 'cf-connecting-ip': ip },
+    });
+  const now = new Date('2026-11-18T10:00:00Z');
+  const id = subtitleIdentity(request('203.0.113.11'), '', '2026-11-18');
+  assert.equal(id, subtitleIdentity(request('203.0.113.11'), '', '2026-11-18'));
+  assert.notEqual(
+    id,
+    subtitleIdentity(request('203.0.113.11'), '', '2026-11-19')
+  );
+  assert.equal(
+    subtitleIdentity(request('2001:db8::1'), '', '2026-11-18'),
+    subtitleIdentity(request('2001:0db8:0:0:0:0:0:1'), '', '2026-11-18')
+  );
+  assert.throws(
+    () => subtitleIdentity(request('invalid'), ''),
+    SubtitleQuotaError
+  );
+  const config = {
+    translation_guest_daily_limit: '100',
+    translation_free_daily_limit: '7',
+    translation_pro_daily_limit: '11',
+  };
+  const results = await Promise.allSettled(
+    Array.from({ length: 110 }, () =>
+      consumeSubtitleQuota(id, 'guest', config, now)
+    )
+  );
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 100);
+  const failure = results.find((r) => r.status === 'rejected');
+  assert.equal(
+    failure?.status === 'rejected' && failure.reason.message,
+    '今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度'
+  );
+  const rows = await db()
+    .select()
+    .from(translationQuota)
+    .where(eq(translationQuota.id, id));
+  assert.equal(rows.length, 1);
+  assert.deepEqual(Object.keys(rows[0]).sort(), ['day', 'id', 'used']);
+  assert.equal(rows[0].used, 100);
+  for (const plan of ['free', 'pro'] as const) {
+    const accountId = `test-${plan}`;
+    const limit = Number(config[`translation_${plan}_daily_limit`]);
+    for (let i = 0; i < limit; i++)
+      await consumeSubtitleQuota(accountId, plan, config, now);
+    await assert.rejects(
+      consumeSubtitleQuota(accountId, plan, config, now),
+      plan === 'free'
+        ? /今日免费双语翻译额度已耗尽，请升级为Pro开启更高额度/
+        : /Pro实时双语额度已耗尽/
+    );
+  }
+  await consumeSubtitleQuota(
+    'tomorrow',
+    'guest',
+    config,
+    new Date('2026-11-19T00:00:00Z')
+  );
+  assert.equal(
+    (
+      await db()
+        .select()
+        .from(translationQuota)
+        .where(eq(translationQuota.id, id))
+    ).length,
+    0
+  );
+  for (const value of ['-1', '1.2', 'abc', '1000001'])
+    assert.throws(() =>
+      validateTranslationConfig({
+        translation_provider: 'disabled',
+        translation_free_daily_limit: value,
+      })
+    );
+});
+
+test('anonymous translation API allows discovery, enforces IP quota and keeps account binding', async () => {
+  const { handleExtensionTranslation } =
+    await import('../src/server/translation/api');
+  await saveConfigs({ translation_guest_daily_limit: '1' });
+  globalThis.fetch = async () =>
+    Response.json([{ translations: [{ text: '你好。' }] }]);
+  const send = (body?: unknown) =>
+    handleExtensionTranslation(
+      new Request('http://localhost:3000/api/extension/translation', {
+        method: body ? 'POST' : 'GET',
+        headers: {
+          origin: `chrome-extension://${'a'.repeat(32)}`,
+          'cf-connecting-ip': '203.0.113.90',
+          'x-tubitle-extension': '1',
+          'content-type': 'application/json',
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+    );
+  const selection = await (await send()).json();
+  assert.equal(selection.data.userId, '');
+  const body = { ...input, expectedRevision: selection.data.revision };
+  assert.equal((await send(body)).status, 200);
+  const exhausted = await send(body);
+  assert.equal(exhausted.status, 401);
+  assert.equal(
+    (await exhausted.json()).message,
+    '今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度'
+  );
+});
+
+test('signed-in free daily allowance is configurable and returns the requested upgrade message', async () => {
+  const { handleExtensionTranslation } =
+    await import('../src/server/translation/api');
+  const { testLogin } = await import('./helpers/login');
+  const login = await testLogin('subtitle-free-quota');
+  await saveConfigs({ translation_free_daily_limit: '1' });
+  globalThis.fetch = async () =>
+    Response.json([{ translations: [{ text: '你好。' }] }]);
+  const send = (body?: unknown) =>
+    handleExtensionTranslation(
+      new Request('http://localhost:3000/api/extension/translation', {
+        method: body ? 'POST' : 'GET',
+        headers: {
+          origin: `chrome-extension://${'a'.repeat(32)}`,
+          cookie: login.cookie,
+          'x-tubitle-extension': '1',
+          'x-tubitle-account': login.userId,
+          'content-type': 'application/json',
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+    );
+  const selection = await (await send()).json();
+  const body = { ...input, expectedRevision: selection.data.revision };
+  assert.equal((await send(body)).status, 200);
+  const exhausted = await send(body);
+  assert.equal(exhausted.status, 403);
+  assert.equal(
+    (await exhausted.json()).message,
+    '今日免费双语翻译额度已耗尽，请升级为Pro开启更高额度'
+  );
+  await saveConfigs({ translation_free_daily_limit: '2' });
+  assert.equal((await send(body)).status, 200);
 });

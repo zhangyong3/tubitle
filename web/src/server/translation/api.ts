@@ -10,6 +10,13 @@ import {
 import { getAllConfigs } from '@/modules/config/service';
 import { respData, respJson } from '@/lib/resp';
 
+import {
+  consumeSubtitleQuota,
+  subtitleIdentity,
+  subtitlePlan,
+  SubtitleQuotaError,
+} from './quota';
+
 const language = z.string().regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8}){0,2}$/);
 const input = z
   .object({
@@ -37,7 +44,7 @@ function rateLimited(userId: string, method: string) {
 export async function handleExtensionTranslation(request: Request) {
   const headers = { 'cache-control': 'private, no-store' };
   try {
-    const access = await authorizeExtension(request);
+    const access = await authorizeExtension(request, true);
     if (access.response) return access.response;
     const parsed =
       request.method === 'GET'
@@ -48,13 +55,17 @@ export async function handleExtensionTranslation(request: Request) {
         status: 400,
         headers,
       });
-    if (rateLimited(access.userId, request.method))
+    if (
+      rateLimited(
+        access.userId || subtitleIdentity(request, ''),
+        request.method
+      )
+    )
       return respJson(-1, '翻译请求过于频繁，请稍后重试', undefined, {
         status: 429,
         headers: { ...headers, 'retry-after': '1' },
       });
-    // No isolate cache: an administrator's saved selection applies to the next request.
-    const config = await getAllConfigs(true);
+    const config = await getAllConfigs(false, 60_000);
     const upstreamSignal = AbortSignal.any([
       request.signal,
       AbortSignal.timeout(12000),
@@ -70,17 +81,31 @@ export async function handleExtensionTranslation(request: Request) {
         { reason: 'CONFIG_CHANGED' },
         { status: 409, headers }
       );
+    await consumeSubtitleQuota(
+      subtitleIdentity(request, access.userId),
+      await subtitlePlan(access.userId),
+      config
+    );
     return respData(
       await translate(config, parsed.data, selection, upstreamSignal),
       { headers }
     );
   } catch (error) {
+    if (error instanceof SubtitleQuotaError)
+      return respJson(
+        -1,
+        error.message,
+        { reason: error.guest ? 'LOGIN_REQUIRED' : 'QUOTA_EXHAUSTED' },
+        { status: error.guest ? 401 : 403, headers }
+      );
     if (error instanceof TranslationError)
       return respJson(-1, error.message, undefined, {
         status: error.status,
         headers: {
           ...headers,
-          ...(error.retryAfterMs > 0 ? { 'retry-after': String(Math.ceil(error.retryAfterMs / 1000)) } : {}),
+          ...(error.retryAfterMs > 0
+            ? { 'retry-after': String(Math.ceil(error.retryAfterMs / 1000)) }
+            : {}),
         },
       });
     const invalid =

@@ -1,6 +1,6 @@
 import { readAnalysisResponse } from "./shared/read-analysis";
 import { requestSentenceAnalysis } from "./analysis-provider";
-import { AnalysisAccessError, enqueueLearning, flushLearning, syncStatus, getAccountTranslationSelection, requestAccountTranslation, type AccountTranslationSelection } from "./learning-sync";
+import { AnalysisAccessError, recordLearningActivity, enqueueLearning, flushLearning, syncStatus, getAccountTranslationSelection, requestAccountTranslation, type AccountTranslationSelection } from "./learning-sync";
 import { pruneSidebarHistory } from "./shared/sidebar-history";
 import { SYNC_ALARM } from "./shared/learning-sync";
 import { sourceLanguage, shouldSkipTranslation } from "./shared/languages";
@@ -292,6 +292,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
       }
       switch (message.type) {
+        case "LEARNING_ACTIVITY": await recordLearningActivity(message.activity); sendResponse({ ok: true, data: null }); break;
         case "LEARNING_SYNC_STATUS": sendResponse({ ok: true, data: await syncStatus() }); break;
         case "LEARNING_SYNC_ENQUEUE": await enqueueLearning(message.record); sendResponse({ ok: true, data: null }); break;
         case "GET_SETTINGS": sendResponse({ ok: true, data: await getSettings() }); break;

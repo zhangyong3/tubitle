@@ -19,13 +19,34 @@ let cacheTime = 0;
 // hour. Reading the config table once a minute is cheap.
 const CACHE_TTL = isCloudflareWorker ? 60_000 : 3600_000;
 let warnedNoDatabase = false;
+let loadingConfigs: Promise<ConfigMap> | null = null;
 
 /**
  * Get all configs from database.
  */
-export async function getDbConfigs(fresh = false): Promise<ConfigMap> {
+export function getDbConfigs(
+  fresh = false,
+  maxAge = CACHE_TTL
+): Promise<ConfigMap> {
+  if (fresh) return loadDbConfigs(true, maxAge);
+  if (!loadingConfigs) {
+    loadingConfigs = loadDbConfigs(false, maxAge).finally(() => {
+      loadingConfigs = null;
+    });
+  }
+  return loadingConfigs;
+}
+
+async function loadDbConfigs(
+  fresh: boolean,
+  maxAge: number
+): Promise<ConfigMap> {
   const now = Date.now();
-  if (!fresh && cachedConfigs && now - cacheTime < CACHE_TTL) {
+  if (
+    !fresh &&
+    cachedConfigs &&
+    now - cacheTime < Math.min(CACHE_TTL, maxAge)
+  ) {
     return cachedConfigs;
   }
 
@@ -71,8 +92,11 @@ export async function getDbConfigs(fresh = false): Promise<ConfigMap> {
 /**
  * Get all configs merged: env + database (database overrides env).
  */
-export async function getAllConfigs(fresh = false): Promise<ConfigMap> {
-  const dbConfigs = await getDbConfigs(fresh);
+export async function getAllConfigs(
+  fresh = false,
+  maxAge = CACHE_TTL
+): Promise<ConfigMap> {
+  const dbConfigs = await getDbConfigs(fresh, maxAge);
   return { ...envConfigs, ...dbConfigs };
 }
 

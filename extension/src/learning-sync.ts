@@ -1,3 +1,4 @@
+import { addDailyLearning, readDailyLearning, type LearningActivity } from "./shared/learning-activity";
 import { SYNC_STATE_KEY, TUBITLE_SITE_URL, type SyncRecord, type SyncStatus } from './shared/learning-sync';
 interface Account { userId: string; name: string }
 interface State { account?: Account; queue: SyncRecord[]; lastSyncedAt?: number; error?: string }
@@ -53,7 +54,7 @@ export async function syncStatus(): Promise<SyncStatus> {
   try { await refreshAccount(); verified = true; } catch { connectionError = '暂时无法连接 Tubitle，请稍后重试'; }
   await writes;
   const state = await read();
-  return { connected: verified && !!state.account, name: state.account?.name, pending: state.queue.length, lastSyncedAt: state.lastSyncedAt, error: connectionError || state.error };
+  return { today: verified && state.account ? await readDailyLearning(state.account.userId) : undefined, connected: verified && !!state.account, name: state.account?.name, pending: state.queue.length, lastSyncedAt: state.lastSyncedAt, error: connectionError || state.error };
 }
 export async function enqueueLearning(record: SyncRecord) {
   let account: Account | undefined;
@@ -109,27 +110,35 @@ function translationFailure(response: Response, message: string): Error {
   return Object.assign(new Error(message), { status: response.status, retryAfterMs: Number.isFinite(delay) ? Math.max(0, delay) : 0 });
 }
 let translationDiscovery: Promise<AccountTranslationSelection> | undefined;
-export function getAccountTranslationSelection(): Promise<AccountTranslationSelection> {
-  // Coalesce concurrent lookups without caching across later requests or admin switches.
-  if (translationDiscovery) return translationDiscovery;
-  translationDiscovery = (async () => {
+let translationDiscoveryOwner = '';
+export async function getAccountTranslationSelection(): Promise<AccountTranslationSelection> {
+  // Coalesce only within the same account; an older anonymous discovery
+  // must not be reused by the first subtitle requests after sign-in.
+  const owner = (await read()).account?.userId || '';
+  if (translationDiscovery && translationDiscoveryOwner === owner) return translationDiscovery;
+  translationDiscoveryOwner = owner;
+  const discovery = (async () => {
     const response = await request('translation');
     const payload = await response.json() as { code?: number; message?: string; data?: AccountTranslationSelection };
     if (response.status === 401) await signedOut();
-    if (!response.ok || payload.code !== 0 || !payload.data?.userId || !/^[a-f0-9]{64}$/.test(payload.data.revision)) {
+    if (!response.ok || payload.code !== 0 || typeof payload.data?.userId !== 'string' || !/^[a-f0-9]{64}$/.test(payload.data.revision)) {
       throw translationFailure(response, payload.message || '字幕翻译暂不可用，请先登录 Tubitle 并确认服务已启用');
     }
     return payload.data;
-  })().finally(() => { translationDiscovery = undefined; });
-  return translationDiscovery;
+  })();
+  translationDiscovery = discovery;
+  try { return await discovery; }
+  finally { if (translationDiscovery === discovery) translationDiscovery = undefined; }
 }
 export async function requestAccountTranslation(text: string, source: string, target: string, selection: AccountTranslationSelection, signal?: AbortSignal): Promise<string> {
   const response = await request('translation', { text, ...(source ? { source } : {}), target, expectedRevision: selection.revision }, selection.userId, signal);
   const payload = await response.json() as { code?: number; message?: string; data?: { translation?: string; revision?: string } };
-  if (response.status === 401) await signedOut();
+  // Anonymous quota exhaustion is not evidence that a cookie session ended.
+  // It may arrive after the user has already signed in in another tab.
+  if (response.status === 401 && selection.userId) await refreshAccount().catch(() => undefined);
   if (!response.ok || payload.code !== 0) throw translationFailure(response, payload.message || '字幕翻译暂不可用，请稍后重试');
   if (payload.data?.revision !== selection.revision || typeof payload.data.translation !== 'string' || !payload.data.translation.trim()) throw new Error('翻译配置已切换或译文无效，请重新请求');
-  if ((await refreshAccount())?.userId !== selection.userId) throw new Error('账户已切换，请重新请求翻译');
+  if (selection.userId && (await refreshAccount())?.userId !== selection.userId) throw new Error('账户已切换，请重新请求翻译');
   signal?.throwIfAborted();
   return payload.data.translation;
 }
@@ -164,4 +173,12 @@ export async function requestAccountAnalysis(sentence: string, requestId: string
   // Do not display/upload an old account's result after a login switch.
   if ((await refreshAccount())?.userId !== account.userId) throw new Error('账户已切换，请重新发起解析');
   return Response.json(payload.data);
+}
+
+export async function recordLearningActivity(activity: LearningActivity): Promise<void> {
+  await writes;
+  const owner = (await read()).account;
+  if (!owner) return;
+  const verified = await refreshAccount();
+  if (verified?.userId === owner.userId) await addDailyLearning(owner.userId, activity);
 }

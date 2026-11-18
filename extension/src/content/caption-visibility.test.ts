@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../shared/settings";
 
 const fixture = vi.hoisted(() => ({
+  storageListeners: [] as Array<(changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void>,
+  showTranslationError: vi.fn(),
   setPanelVisible: vi.fn(),
   setPlaybackActive: vi.fn(),
   setSnapshot: vi.fn(),
@@ -32,6 +34,7 @@ vi.mock("./overlay", () => ({
     updateVideoBounds() {}
     showSentence() {}
     showTranslation() {}
+    showTranslationError = fixture.showTranslationError;
   }
 }));
 vi.mock("./learning-panel", () => ({
@@ -61,6 +64,7 @@ const captions = () => ({ sentences: fixture.sentences, officialTranslations: ne
 async function openFixture(url = "https://www.youtube.com/watch?v=test") {
   vi.resetModules();
   vi.clearAllMocks();
+  fixture.storageListeners.length = 0;
   fixture.fetchCaptions.mockImplementation(async () => captions());
   let pressed = "false";
   const video = {
@@ -87,9 +91,9 @@ async function openFixture(url = "https://www.youtube.com/watch?v=test") {
   vi.stubGlobal("location", location);
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { nextFrame = callback; });
   vi.stubGlobal("MutationObserver", class { observe() {} disconnect() {} });
-  vi.stubGlobal("chrome", { storage: {
+  vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn(async () => ({ ok: true })) }, storage: {
     local: { get: async () => ({ settings: DEFAULT_SETTINGS }) },
-    onChanged: { addListener() {} }
+    onChanged: { addListener: (listener: (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void) => { fixture.storageListeners.push(listener); } }
   } });
   await import("./index");
   await vi.waitFor(() => expect(nextFrame).toBeTypeOf("function"));
@@ -324,4 +328,60 @@ it("retries a failed caption load when CC is opened and translates the recovered
   } finally {
     consoleWarn.mockRestore();
   }
+});
+
+
+it("shows quota exhaustion inline without opening a dialog", async () => {
+  const { tick, video, setPressed } = await openFixture();
+  const confirm = vi.fn(() => false);
+  Object.assign(window, { confirm });
+  fixture.sendTranslation.mockRejectedValue(new Error("今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度"));
+  setPressed("true");
+  tick();
+  await vi.waitFor(() => expect(fixture.showTranslationError).toHaveBeenLastCalledWith("one", "今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度"));
+  video.currentTime = 1.5;
+  tick(500);
+  await vi.waitFor(() => expect(fixture.showTranslationError).toHaveBeenLastCalledWith("two", "今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度"));
+  expect(confirm).not.toHaveBeenCalled();
+});
+
+
+it("retries anonymous quota failures after login without reloading the video", async () => {
+  const { tick, setPressed } = await openFixture();
+  const message = "今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度";
+  const error = Object.assign(new Error(message), { status: 401 });
+  let rejectCurrent!: (reason: unknown) => void;
+  fixture.sendTranslation.mockImplementation((request) => request.text === fixture.sentences[0]!.text
+    ? new Promise((_resolve, reject) => { rejectCurrent = reject; }) : Promise.reject(error));
+  setPressed("true"); tick();
+  await vi.waitFor(() => expect(fixture.setTranslation).toHaveBeenCalledWith("two", undefined, message));
+  rejectCurrent(error);
+  await vi.waitFor(() => expect(fixture.showTranslationError).toHaveBeenCalledWith("one", message));
+  const oldSignal = fixture.sendTranslation.mock.calls[0]![1] as AbortSignal;
+  fixture.sendTranslation.mockResolvedValue("登录后的译文");
+  for (const listener of fixture.storageListeners) listener({ learningSyncStateV2: {
+    oldValue: { queue: [] }, newValue: { account: { userId: "alice", name: "Alice" }, queue: [] },
+  } }, "local");
+  await vi.waitFor(() => expect(fixture.setTranslation).toHaveBeenCalledWith("two", "登录后的译文"));
+  expect(oldSignal.aborted).toBe(true);
+  const snapshot = fixture.setSnapshot.mock.lastCall?.[0];
+  expect(snapshot.sentences.every((sentence: { translationError?: string }) => !sentence.translationError)).toBe(true);
+});
+
+it("ignores late anonymous quota errors after login has restored translations", async () => {
+  const { tick, setPressed } = await openFixture();
+  const rejectOld: Array<(error: Error) => void> = [];
+  fixture.sendTranslation.mockImplementation(() => new Promise((_resolve, reject) => { rejectOld.push(reject); }));
+  setPressed("true"); tick();
+  await vi.waitFor(() => expect(rejectOld.length).toBeGreaterThan(1));
+  fixture.sendTranslation.mockResolvedValue("新账号译文");
+  for (const listener of fixture.storageListeners) listener({ learningSyncStateV2: {
+    oldValue: { queue: [] }, newValue: { account: { userId: "alice", name: "Alice" }, queue: [] },
+  } }, "local");
+  await vi.waitFor(() => expect(fixture.setTranslation).toHaveBeenCalledWith("one", "新账号译文"));
+  const message = "今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度";
+  for (const reject of rejectOld) reject(Object.assign(new Error(message), { status: 401 }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await vi.waitFor(() => expect(fixture.setTranslation).toHaveBeenCalledWith("two", "新账号译文"));
+  expect(fixture.setTranslation.mock.calls.some(([, , error]) => error === message)).toBe(false);
 });

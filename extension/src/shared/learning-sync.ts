@@ -16,6 +16,7 @@ export interface SyncRecord {
   startSeconds: number;
 }
 export interface SyncStatus {
+  today?: import("./learning-activity").DailyLearningStats;
   connected: boolean;
   name?: string;
   pending: number;

@@ -1,3 +1,4 @@
+import { HistoryDeleteButton } from "./history-delete-button";
 import { t, initializeI18n, getUiLanguage } from "./shared/i18n";
 import { useI18n } from "./shared/use-i18n";
 import { TUBITLE_SITE_URL } from "./shared/learning-sync";
@@ -500,14 +501,7 @@ function App() {
     setHistory([]);
   }
 
-  function jumpToHistory(entry: SidebarHistoryEntry) {
-    const target = historyVideoTarget(entry);
-    if (!target) return;
-    if (EMBEDDED) postToHost({ source: "tubitle-panel", type: "SEEK_HISTORY", videoId: target.videoId, startMs: target.startMs });
-    else void chrome.tabs.create({ url: target.url }).catch(() => setPlaybackError("无法打开原视频，请稍后重试"));
-  }
-
-  const tabs = <><SidebarTabs activeTab={activeTab} onSelect={setActiveTab} /><LearningSyncIndicator /></>;
+  const tabs = <><SidebarTabs activeTab={activeTab} onSelect={setActiveTab} /><LearningSyncIndicator onCollapse={EMBEDDED ? () => postToHost({ source: "tubitle-panel", type: "COLLAPSE_PANEL" }) : undefined} loginNotice={analysisAction.reason === "LOGIN_REQUIRED" ? analysisError : undefined} /></>;
 
   if (activeTab === "subtitles") {
     return (
@@ -536,21 +530,22 @@ function App() {
         />
         <main className="analysis-page" id="analysis-panel" role="tabpanel" aria-labelledby="analysis-tab">
         <header className="analysis-header">
-          <div><div className="brand">Tubitle</div><h1>{savedTranslation ? t("句子译文") : t("句子解析")}</h1></div>
-          <button type="button" onClick={() => void copyAnalysis()}>{t(copyStatus)}</button>
+          <div><h1>{savedTranslation ? t("句子译文") : t("句子解析")}</h1></div>
+          {analysisSentence.trim() && <button type="button" onClick={() => void copyAnalysis()}>{t(copyStatus)}</button>}
         </header>
+        {analysisSentence.trim() ? <>
         <section className="analysis-original"><div className="analysis-label">{t("原句")}</div><p>{analysisSentence}</p></section>
         <section className="analysis-output">
           {analysisText ? <AnalysisText value={analysisText} /> : <div className="analysis-waiting">{analysisStatus === "streaming" ? t("正在获取解析…") : t("未生成解析")}</div>}
           {analysisStatus === "streaming" && <span className="typewriter-cursor" aria-hidden="true" />}
         </section>
-        {analysisError && <div className="analysis-stream-error">{t(analysisError)}
-          {analysisAction.reason === "LOGIN_REQUIRED" && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl || `${TUBITLE_SITE_URL}/${getUiLanguage().startsWith("zh") ? "zh" : "en"}/sign-in` })}>{t("登录 Tubitle")}</button>}
+        {analysisError && analysisAction.reason !== "LOGIN_REQUIRED" && <div className="analysis-stream-error">{t(analysisError)}
           {analysisAction.reason === "QUOTA_EXHAUSTED" && analysisAction.actionUrl && <button type="button" onClick={() => void chrome.tabs.create({ url: analysisAction.actionUrl })}>{t("查看 / 升级套餐")}</button>}
         </div>}
-        <div className={`analysis-progress ${analysisStatus}`}>
+        <div className={`analysis-progress ${analysisStatus}`} hidden={analysisAction.reason === "LOGIN_REQUIRED"}>
           {analysisStatus === "streaming" ? (analysisText ? t("大模型正在生成，内容会实时显示…") : t("正在获取解析…")) : analysisStatus === "done" ? t("解析完成") : t("解析未完整完成")}
         </div>
+        </> : <div className="status">{t("在 YouTube 字幕中点击魔法棒，即可在这里展示查询")}</div>}
         </main>
       </div>
     );
@@ -569,10 +564,9 @@ function App() {
         />
         <main className="history-page" id="history-panel" role="tabpanel" aria-labelledby="history-tab">
           <header className="history-header">
-            <div><div className="brand">Tubitle</div><h1>{t("历史记录")}</h1></div>
-            {visibleHistory.length > 0 && <button type="button" onClick={() => void clearHistory()}>{t("清空")}</button>}
+            <div><h1>{t("历史记录")}</h1></div>
+            {visibleHistory.length > 0 && <HistoryDeleteButton clearAll label={t("清空")} onDelete={() => clearHistory().catch(() => setPlaybackError("删除失败，请重试"))} />}
           </header>
-          <p className="history-retention-note">{t("最近 {0} 天 · 点击记录查看内容 · 使用图标跳转视频或删除", historyRetentionDays)}</p>
           {playbackError && <p className="error" role="alert">{t(playbackError)}</p>}
           {visibleHistory.length > 0 ? (
             <div className="history-tree">
@@ -594,15 +588,10 @@ function App() {
                                   {entry.type !== "dictionary" && <small>{analysisPreview(entry.result)}</small>}
                                   <small>{target ? `${entry.videoTitle || t("原视频")} · ${formatCaptionTime(target.startMs)}` : t("无视频位置")}</small>
                                 </span>
-                                <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
                               </button>
                               <div className="history-record-actions">
-                                <button type="button" className="history-icon" disabled={!target} aria-label={t("跳转视频：{0}", entry.type === "dictionary" ? entry.word : entry.sentence)} title={target ? t("跳转到 YouTube 对应位置") : t("此记录没有视频位置")} onClick={() => jumpToHistory(entry)}>
-                                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3 10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" /></svg>
-                                </button>
-                                <button type="button" className="history-icon history-delete" aria-label={t("删除记录：{0}", entry.type === "dictionary" ? entry.word : entry.sentence)} title={t("删除这条本地历史")} onClick={() => void deleteSidebarHistory(entry.id).then(setHistory).catch(() => setPlaybackError("删除失败，请重试"))}>
-                                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg>
-                                </button>
+                                <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
+                                <HistoryDeleteButton label={t("删除记录：{0}", entry.type === "dictionary" ? entry.word : entry.sentence)} onDelete={() => deleteSidebarHistory(entry.id).then(setHistory).catch(() => setPlaybackError("删除失败，请重试"))} />
                               </div>
                             </article>;
                           })}
@@ -824,8 +813,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
     >
       <header className="transcript-header">
         <div className="transcript-heading-copy">
-          <div className="brand">{t("Tubitle · 当前视频")}</div>
-          <h1>{snapshot?.videoTitle || t("双语字幕")}</h1>
+          <h1 title={snapshot?.videoTitle || t("双语字幕")}>{snapshot?.videoTitle || t("双语字幕")}</h1>
         </div>
         <div className="transcript-actions">
           {snapshot && !snapshot.loading && !snapshot.error && snapshot.sentences.length > 0 && (
@@ -834,14 +822,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
             </button>
           )}
           <label><input type="checkbox" checked={autoFollow} onChange={(event) => onAutoFollowChange(event.target.checked)} />{t("自动跟随")}</label>
-          {EMBEDDED && (
-            <button
-              type="button"
-              className="collapse-panel"
-              aria-label={t("收起学习面板")}
-              onClick={() => postToHost({ source: "tubitle-panel", type: "COLLAPSE_PANEL" })}
-            >{t("收起")}</button>
-          )}
+
         </div>
       </header>
       <div className="transcript-progress" aria-label={t("视频播放进度")}>

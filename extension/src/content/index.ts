@@ -1,3 +1,5 @@
+import { SYNC_STATE_KEY } from "../shared/learning-sync";
+import { PlaybackActivity } from "../shared/learning-activity";
 import { PrefetchQueue } from "./prefetch-queue";
 import { initializeI18n, subscribeUiLanguage } from "../shared/i18n";
 import { historyNavigationAction } from "../shared/history-navigation";
@@ -48,6 +50,7 @@ const officialTranslations = new Map<string, string>();
 const translationErrors = new Map<string, string>();
 const pendingTranslations = new Map<string, Promise<string>>();
 const prefetchStateByProvider = new Map<ExtensionSettings["provider"], PrefetchBatchState>();
+let accountPrefetchRetry: { signal: AbortSignal; indexes: number[] } | undefined;
 type PrefetchItem = { sentence: CaptionSentence; provider: ExtensionSettings["provider"]; signal: AbortSignal; version: number };
 const prefetchQueue = new PrefetchQueue<PrefetchItem>({
   async run(item) {
@@ -59,8 +62,25 @@ const prefetchQueue = new PrefetchQueue<PrefetchItem>({
     translationErrors.set(item.sentence.id, errorMessage(error));
     learningPanel.setTranslation(item.sentence.id, undefined, errorMessage(error));
   },
-  onIdle() { if (activeIndex >= 0) scheduleTranslationPrefetch(activeIndex); },
+  onIdle() {
+    if (resumeAccountPrefetch()) return;
+    if (activeIndex >= 0) scheduleTranslationPrefetch(activeIndex);
+  },
 });
+
+// Let cancelled tasks release their queue slots before planning the new
+// account's window; otherwise their old keys make the new window skip rows.
+function resumeAccountPrefetch(): boolean {
+  if (!accountPrefetchRetry) return false;
+  if (!prefetchQueue.idle) return true;
+  const retry = accountPrefetchRetry;
+  accountPrefetchRetry = undefined;
+  if (retry.signal !== captionSession?.signal) return false;
+  prefetchStateByProvider.clear();
+  if (activeIndex >= 0) scheduleTranslationPrefetch(activeIndex);
+  prefetchCaptionIndexes(retry.indexes, true);
+  return true;
+}
 
 const nativeCaptionStyle = document.createElement("style");
 nativeCaptionStyle.id = "tubetitle-hide-native-captions";
@@ -358,6 +378,7 @@ async function translateSentence(sentence: CaptionSentence): Promise<void> {
   } catch (error) {
     if (signal.aborted || !isCurrentCaptionLoad(version) || target !== settings.targetLanguage) return;
     const message = errorMessage(error);
+    if (message === '今日匿名双语翻译额度已用完，请登录Tubitle开启更高额度') prefetchQueue.clear(false);
     translationErrors.set(sentence.id, message);
     learningPanel.setTranslation(sentence.id, undefined, message);
     if (settings.showChinese) overlay.showTranslationError(sentence.id, message);
@@ -571,6 +592,11 @@ function finishCaptionPlayback(event: Event): void {
   if (document.fullscreenElement?.contains(video)) void document.exitFullscreen().catch(() => undefined);
 }
 
+const playbackActivity = new PlaybackActivity((activity) => {
+  void chrome.runtime.sendMessage({ type: "LEARNING_ACTIVITY", activity })?.catch(() => undefined);
+});
+window.addEventListener("pagehide", () => playbackActivity.flush());
+
 function tick(timestamp: number): void {
   syncYouTubeCaptionVisibility();
   const video = videoElement();
@@ -603,6 +629,14 @@ function tick(timestamp: number): void {
   learningPanel.setPlaybackActive(Boolean(panelVisible && video && !video.paused && !video.seeking && !video.ended &&
     video.playbackRate > 0 && video.readyState >= video.HAVE_FUTURE_DATA &&
     !video.closest(".ad-showing, .ad-interrupting")));
+  playbackActivity.update({
+    at: timestamp, position: (video?.currentTime ?? 0) * 1000, videoId: captionVideoId || "",
+    sentenceId: sentences[activeIndex]?.id,
+    playing: Boolean(captionSession && sentences.length > 0 && !positionPending && video && !video.paused && !video.seeking && !video.ended &&
+      video.playbackRate > 0 && video.readyState >= video.HAVE_FUTURE_DATA &&
+      !document.querySelector("#movie_player.ad-showing, #movie_player.ad-interrupting")),
+    rate: video?.playbackRate ?? 1,
+  });
   requestAnimationFrame(tick);
 }
 
@@ -626,7 +660,27 @@ document.addEventListener("keydown", handleShortcut, true);
 document.addEventListener("scroll", schedulePanelLayoutUpdate, { capture: true, passive: true });
 window.addEventListener("resize", schedulePanelLayoutUpdate, { passive: true });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || !changes.settings) return;
+  if (area !== "local") return;
+  const accountChange = changes[SYNC_STATE_KEY];
+  if (settings?.serviceMode === "tubitle" && accountChange?.oldValue?.account?.userId !== accountChange?.newValue?.account?.userId) {
+    const failedIndexes = sentences.flatMap((sentence, index) => translationErrors.has(sentence.id) ? [index] : []);
+    // Old anonymous requests must not put quota errors back after sign-in.
+    const hadSession = Boolean(captionSession);
+    captionSession?.abort();
+    captionSession = hadSession ? new AbortController() : undefined;
+    pendingTranslations.clear();
+    prefetchQueue.clear();
+    prefetchStateByProvider.clear();
+    translationErrors.clear();
+    publishTranscriptSnapshot();
+    if (captionSession && activeIndex >= 0) {
+      overlay.showTranslation(sentences[activeIndex]!.id, "");
+      void translateSentence(sentences[activeIndex]!);
+      accountPrefetchRetry = { signal: captionSession.signal, indexes: failedIndexes };
+      resumeAccountPrefetch();
+    }
+  }
+  if (!changes.settings) return;
   void getSettings().then((next) => {
     const languagesChanged = settings.targetLanguage !== next.targetLanguage || JSON.stringify(settings.excludedLanguages) !== JSON.stringify(next.excludedLanguages);
     const localModeChanged = (settings.provider === "hy-mt-local") !== (next.provider === "hy-mt-local");
