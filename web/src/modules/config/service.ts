@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 
 import { db, hasDatabaseConfigured, isCloudflareWorker } from '@/core/db';
+import { validateTranslationConfig } from '@/core/translation/config';
 import { envConfigs } from '@/config';
 import { config } from '@/config/db/schema';
 import { decryptSecret, encryptSecret, isEncryptedSecret } from '@/lib/crypto';
@@ -22,9 +23,9 @@ let warnedNoDatabase = false;
 /**
  * Get all configs from database.
  */
-export async function getDbConfigs(): Promise<ConfigMap> {
+export async function getDbConfigs(fresh = false): Promise<ConfigMap> {
   const now = Date.now();
-  if (cachedConfigs && now - cacheTime < CACHE_TTL) {
+  if (!fresh && cachedConfigs && now - cacheTime < CACHE_TTL) {
     return cachedConfigs;
   }
 
@@ -70,8 +71,8 @@ export async function getDbConfigs(): Promise<ConfigMap> {
 /**
  * Get all configs merged: env + database (database overrides env).
  */
-export async function getAllConfigs(): Promise<ConfigMap> {
-  const dbConfigs = await getDbConfigs();
+export async function getAllConfigs(fresh = false): Promise<ConfigMap> {
+  const dbConfigs = await getDbConfigs(fresh);
   return { ...envConfigs, ...dbConfigs };
 }
 
@@ -138,6 +139,13 @@ const ENDPOINT_SECRETS: Record<string, string[]> = {
   r2_endpoint: ['r2_secret_key'],
   telegram_api_base: ['telegram_bot_token'],
   notify_webhook_url: ['notify_webhook_token'],
+  translation_selfhosted_endpoint: ['translation_selfhosted_api_key'],
+  translation_siliconflow_endpoint: ['translation_siliconflow_api_key'],
+  translation_microsoft_endpoint: ['translation_microsoft_api_key'],
+  translation_aliyun_endpoint: [
+    'translation_aliyun_access_key_id',
+    'translation_aliyun_access_key_secret',
+  ],
 };
 
 const normalizeEndpoint = (value: string | undefined) =>
@@ -177,18 +185,28 @@ export function assertEndpointSecretsResupplied(
  * encrypted at rest — see SECRET_SETTING_NAMES / SECRET_KEY_PATTERN.
  */
 export async function saveConfigs(configs: ConfigMap) {
-  assertEndpointSecretsResupplied(configs, await getAllConfigs());
+  const saved = await getAllConfigs(true);
+  assertEndpointSecretsResupplied(configs, saved);
+  if (Object.keys(configs).some((key) => key.startsWith('translation_'))) {
+    validateTranslationConfig({
+      ...saved,
+      ...Object.fromEntries(
+        Object.entries(configs).filter(
+          ([, value]) => !isMaskedConfigValue(value)
+        )
+      ),
+    });
+  }
   const entries = await Promise.all(
     Object.entries(configs)
       .filter(
         ([name, value]) =>
           !PROTECTED_CONFIG_KEYS.has(name) && !isMaskedConfigValue(value)
       )
-      .map(
-        async ([name, value]): Promise<[string, string]> =>
-          isSecretConfigKey(name)
-            ? [name, await encryptSecret(value)]
-            : [name, value]
+      .map(async ([name, value]): Promise<[string, string]> =>
+        isSecretConfigKey(name)
+          ? [name, await encryptSecret(value)]
+          : [name, value]
       )
   );
   if (entries.length === 0) {
@@ -230,7 +248,7 @@ export async function getConfig(name: string): Promise<string | undefined> {
  * contains every env secret in plaintext.
  */
 export async function getAdminConfigs(): Promise<ConfigMap> {
-  const configs = await getAllConfigs();
+  const configs = await getAllConfigs(true);
   const result: ConfigMap = {};
   for (const [name, value] of Object.entries(configs)) {
     if (PROTECTED_CONFIG_KEYS.has(name)) continue;
@@ -309,11 +327,10 @@ export async function replaceCustomConfigs(
   const entries = await Promise.all(
     clean
       .filter(([, value]) => !isMaskedConfigValue(value))
-      .map(
-        async ([name, value]): Promise<[string, string]> =>
-          isSecretConfigKey(name)
-            ? [name, await encryptSecret(value)]
-            : [name, value]
+      .map(async ([name, value]): Promise<[string, string]> =>
+        isSecretConfigKey(name)
+          ? [name, await encryptSecret(value)]
+          : [name, value]
       )
   );
 

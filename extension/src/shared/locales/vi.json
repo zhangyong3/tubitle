@@ -41,7 +41,7 @@
   "字幕翻译与 AI 语句分析": "Dịch phụ đề và phân tích câu bằng AI",
   "使用 Tubitle 服务（默认）": "Dùng dịch vụ Tubitle (mặc định)",
   "使用自己的 API Key": "Dùng khóa API riêng",
-  "由 Tubitle 提供字幕翻译与 AI 语句分析。AI 解析需登录，免费版每天 3 次，Pro 每天 100 次。": "Tubitle cung cấp dịch thuật và phân tích AI. Phân tích cần đăng nhập: miễn phí 3 lần/ngày, Pro 100 lần/ngày.",
+  "由 Tubitle 提供字幕翻译与 AI 语句分析，均需登录。AI 解析免费版每天 3 次，Pro 每天 100 次。": "Đăng nhập để dùng bản dịch phụ đề và phân tích AI của Tubitle. Phân tích AI: 3 lượt/ngày với gói Miễn phí, 100 lượt/ngày với Pro.",
   "字幕与句子直接发送到你选择的服务商，费用由服务商收取，不消耗 Tubitle 额度。登录后学习记录仍会自动同步。": "Văn bản được gửi trực tiếp đến nhà cung cấp đã chọn và tính phí theo nhà cung cấp, không dùng hạn mức Tubitle. Bản ghi học tập vẫn đồng bộ sau khi đăng nhập.",
   "字幕翻译 API": "API dịch phụ đề",
   "翻译服务商": "Nhà cung cấp dịch thuật",

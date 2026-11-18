@@ -239,7 +239,7 @@ export function App() {
             </select>
           </div>
           <p className="hint">{form.serviceMode === "tubitle"
-            ? t("由 Tubitle 提供字幕翻译与 AI 语句分析。AI 解析需登录，免费版每天 3 次，Pro 每天 100 次。")
+            ? t("由 Tubitle 提供字幕翻译与 AI 语句分析，均需登录。AI 解析免费版每天 3 次，Pro 每天 100 次。")
             : t("字幕与句子直接发送到你选择的服务商，费用由服务商收取，不消耗 Tubitle 额度。登录后学习记录仍会自动同步。")}</p>
         </section>
         {form.serviceMode === "custom" && <>

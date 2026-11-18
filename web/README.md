@@ -13,7 +13,23 @@ A product website and private English learning library built from the supplied S
 - Automatic Chrome extension sync through the current website login session, account-bound retry queues, and full analysis viewing. No connection codes, manual backfill or manual record creation.
 - Saved-record metadata appears in the existing admin user timeline.
 
-Subtitle quota enforcement, website PDF creation, dictation, shadowing and recurring reports are not implemented in this website release. Extension translation/PDF providers remain separate. Account AI analysis uses the website provider and server-enforced daily limits (Free 3 / Pro 100).
+Subtitle quota enforcement, website PDF creation, dictation, shadowing and recurring reports are not implemented in this website release. Platform subtitle translation now uses the website's manually selected provider; custom extension translation and PDF providers remain separate. Account AI analysis uses the website provider and server-enforced daily limits (Free 3 / Pro 100).
+
+## Platform subtitle translation
+
+Open `/zh/admin/settings` → **字幕翻译** (English: **Subtitle Translation**). Configure the credentials for the providers you want to use, choose the active provider, test a short translation, then save. Tests use the unsaved form and can incur upstream charges. The active provider's required fields are checked before saving; connectivity and translation quality are checked by the Test button.
+
+Supported providers are SiliconFlow Chat Completions (model ID required), Alibaba Cloud Machine Translation General Edition (`TranslateGeneral`, not Bailian), Microsoft Translator v3 (resource key and region where required), and the existing self-hosted service (`GET /health`, `POST /v1/translate`). For self-hosted services, enter the root URL without `/v1`; remote services should use HTTPS and an access key. Configure only trusted endpoints. Changing a saved endpoint requires re-entering its associated saved credentials.
+
+Platform translation is **disabled until explicitly configured** and requires website sign-in. The extension's Tubitle mode calls `/api/extension/translation` using the existing website session; upstream credentials stay on the server. Custom API mode continues to call the user's provider directly. Build release extensions with `TUBITLE_SITE_URL=https://your-site.example`; platform mode no longer uses `TUBITLE_TRANSLATION_URL`.
+
+Saving a provider selection applies to newly started requests without redeployment. Requests already running can finish on their captured configuration; displayed/preloaded subtitles are not forcibly refreshed. Discovery returns an opaque configuration/model revision and the authenticated account ID. Translation requests must include that revision; a switch before execution returns HTTP 409 instead of caching a new provider's result under an old identity. The extension's translation caches are separated by account and revision. Switching back to an identical configuration can reuse its previous cached translations. Self-hosted model changes are detected through `/health` and guarded by `expectedModel`.
+
+There is **no automatic fallback or multi-provider fan-out**. The API accepts at most 1,200 UTF-16 code units of text and uses a shared 12-second upstream budget per request. It checks session ownership, origin and input shape, and applies burst-friendly, per-isolate traffic smoothing. Daily subtitle plan quotas, distributed capacity limits and provider usage accounting are not implemented; before a public paid rollout, add the intended account quotas and edge limits. Set `CONFIG_ENCRYPTION_KEY` in the server/Worker environment to enable the existing encrypted credential storage; without it, the configuration system stores secrets in plaintext. Admin responses always mask credential fields.
+
+Web and the gateway support the Cloudflare build (`pnpm cf:build`); the current model inference remains on the VPS. A Worker's `localhost` cannot reach a developer computer or the VPS. Use an accessible HTTPS self-hosted endpoint, and configure a persistent database and server secrets for production. This change does not deploy the application or migrate inference.
+
+Validation: `pnpm test:translation`, `pnpm exec tsc --noEmit`, `pnpm build`, `pnpm cf:build`; extension: `npm test --workspace extension`, `npm run typecheck --workspace extension`, `npm run build --workspace extension`. Translation tests mock upstream APIs; real credentials and an actual-video browser check are still needed for each enabled provider.
 
 ## Local development
 

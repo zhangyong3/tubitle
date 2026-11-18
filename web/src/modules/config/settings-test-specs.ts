@@ -26,6 +26,31 @@ export interface TestResult {
 }
 
 export const testSpecs: Record<string, TestSpec> = {
+  translation: {
+    group: 'translation',
+    fields: [
+      {
+        name: 'text',
+        label: 'Text / 原文',
+        type: 'textarea',
+        defaultValue: 'This is a translation connection test.',
+        required: true,
+      },
+      {
+        name: 'source',
+        label: 'Source language / 源语言',
+        type: 'text',
+        defaultValue: 'en',
+      },
+      {
+        name: 'target',
+        label: 'Target language / 目标语言',
+        type: 'text',
+        defaultValue: 'zh',
+        required: true,
+      },
+    ],
+  },
   resend: {
     group: 'resend',
     fields: [

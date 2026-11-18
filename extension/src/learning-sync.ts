@@ -102,6 +102,32 @@ async function drain() {
 export class AnalysisAccessError extends Error {
   constructor(message: string, public reason?: string, public actionUrl?: string) { super(message); }
 }
+export interface AccountTranslationSelection { userId: string; provider: string; model: string; revision: string }
+let translationDiscovery: Promise<AccountTranslationSelection> | undefined;
+export function getAccountTranslationSelection(): Promise<AccountTranslationSelection> {
+  // Coalesce concurrent lookups without caching across later requests or admin switches.
+  if (translationDiscovery) return translationDiscovery;
+  translationDiscovery = (async () => {
+    const response = await request('translation');
+    const payload = await response.json() as { code?: number; message?: string; data?: AccountTranslationSelection };
+    if (response.status === 401) await signedOut();
+    if (!response.ok || payload.code !== 0 || !payload.data?.userId || !/^[a-f0-9]{64}$/.test(payload.data.revision)) {
+      throw new Error(payload.message || '字幕翻译暂不可用，请先登录 Tubitle 并确认服务已启用');
+    }
+    return payload.data;
+  })().finally(() => { translationDiscovery = undefined; });
+  return translationDiscovery;
+}
+export async function requestAccountTranslation(text: string, source: string, target: string, selection: AccountTranslationSelection, signal?: AbortSignal): Promise<string> {
+  const response = await request('translation', { text, ...(source ? { source } : {}), target, expectedRevision: selection.revision }, selection.userId, signal);
+  const payload = await response.json() as { code?: number; message?: string; data?: { translation?: string; revision?: string } };
+  if (response.status === 401) await signedOut();
+  if (!response.ok || payload.code !== 0) throw new Error(payload.message || '字幕翻译暂不可用，请稍后重试');
+  if (payload.data?.revision !== selection.revision || typeof payload.data.translation !== 'string' || !payload.data.translation.trim()) throw new Error('翻译配置已切换或译文无效，请重新请求');
+  if ((await refreshAccount())?.userId !== selection.userId) throw new Error('账户已切换，请重新请求翻译');
+  signal?.throwIfAborted();
+  return payload.data.translation;
+}
 export async function requestAccountAnalysis(sentence: string, requestId: string, signal: AbortSignal): Promise<Response> {
   const account = await refreshAccount();
   if (!account) throw new AnalysisAccessError('请先登录 Tubitle 后使用 AI 解析', 'LOGIN_REQUIRED', `${TUBITLE_SITE_URL}/zh/sign-in`);

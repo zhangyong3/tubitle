@@ -33,7 +33,8 @@
     "test:learning": "node --import tsx --test tests/learning.test.ts",
     "postbuild": "node scripts/verify-messages.mjs",
     "test:admin-entry": "node --import tsx --test tests/admin-entry.test.ts",
-    "test:analysis": "node --import tsx --test tests/analysis.test.ts"
+    "test:analysis": "node --import tsx --test tests/analysis.test.ts",
+    "test:translation": "node --import tsx --test tests/translation.test.ts"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,mjs,cjs}": "prettier --write",

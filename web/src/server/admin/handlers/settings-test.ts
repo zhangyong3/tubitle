@@ -1,3 +1,4 @@
+import { discoverTranslation, translate } from '@/core/translation';
 import {
   assertEndpointSecretsResupplied,
   getAllConfigs,
@@ -33,13 +34,46 @@ export async function POST({ request, actor }: AdminHandlerContext) {
     // Test against the values currently entered in the form (possibly unsaved),
     // falling back to saved config. Masked secrets mean "unchanged" — skip them
     // so the real saved value applies instead of the bullet placeholder.
-    const configs = await getAllConfigs();
+    const configs = await getAllConfigs(true);
     // A test must not send a saved secret to an endpoint that isn't saved.
     assertEndpointSecretsResupplied(overrides, configs);
     for (const [key, value] of Object.entries(overrides)) {
       if (typeof value === 'string' && !isMaskedConfigValue(value)) {
         configs[key] = value;
       }
+    }
+
+    if (group === 'translation') {
+      if (
+        !inputs.text?.trim() ||
+        inputs.text.length > 1200 ||
+        !/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8}){0,2}$/.test(
+          inputs.target || ''
+        ) ||
+        (inputs.source &&
+          !/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8}){0,2}$/.test(inputs.source))
+      )
+        return respErr('Invalid translation test input');
+      const selection = await discoverTranslation(configs, request.signal);
+      const result = await translate(
+        configs,
+        {
+          text: inputs.text.trim(),
+          source: inputs.source || undefined,
+          target: inputs.target,
+        },
+        selection,
+        request.signal
+      );
+      return respData({
+        success: true,
+        message: 'Translation succeeded / 翻译成功',
+        details: {
+          Provider: selection.provider,
+          Model: selection.model,
+          Translation: result.translation,
+        },
+      });
     }
 
     // Notify tests live in the notify module (config can't import it).

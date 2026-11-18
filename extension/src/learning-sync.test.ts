@@ -97,3 +97,38 @@ it('reports connection failure separately from a signed-out session and recovers
   account = { userId: 'alice', name: 'Alice' };
   expect(await sync.syncStatus()).toMatchObject({ connected: true, error: undefined });
 });
+
+describe('account subtitle translation', () => {
+  const selection = { userId: 'alice', provider: 'microsoft', model: 'Translator/v3.0', revision: 'a'.repeat(64) };
+  it('discovers fresh revisions, coalesces lookups and sends only account-bound requests', async () => {
+    account = { userId: 'alice', name: 'Alice' };
+    let revision = selection.revision;
+    request.mockImplementation(async (url, init) => String(url).endsWith('/translation')
+      ? ok(init?.method === 'GET' ? { ...selection, revision } : { translation: '你好', revision }) : ok(account));
+    const sync = await import('./learning-sync');
+    const [first, duplicate] = await Promise.all([sync.getAccountTranslationSelection(), sync.getAccountTranslationSelection()]);
+    expect(first).toEqual(duplicate);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(await sync.requestAccountTranslation('Hello', 'en', 'zh', first)).toBe('你好');
+    const [, init] = request.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    expect(init).toMatchObject({ credentials: 'include', redirect: 'error', headers: { 'X-Tubitle-Account': 'alice' } });
+    expect(JSON.parse(String(init?.body))).toEqual({ text: 'Hello', source: 'en', target: 'zh', expectedRevision: first.revision });
+    revision = 'b'.repeat(64);
+    expect((await sync.getAccountTranslationSelection()).revision).toBe(revision);
+    expect(JSON.stringify(init)).not.toContain('api_key');
+  });
+  it('rejects signed-out discovery and switched or invalid results without fallback', async () => {
+    const sync = await import('./learning-sync');
+    await expect(sync.getAccountTranslationSelection()).rejects.toThrow();
+    request.mockResolvedValue(Response.json({ code: -1, message: '翻译配置已切换' }, { status: 409 }));
+    await expect(sync.requestAccountTranslation('Hello', 'en', 'zh', selection)).rejects.toThrow('翻译配置已切换');
+    request.mockResolvedValue(ok({ translation: 'old', revision: 'b'.repeat(64) }));
+    await expect(sync.requestAccountTranslation('Hello', 'en', 'zh', selection)).rejects.toThrow('译文无效');
+  });
+  it('discards an in-flight translation if the cookie account changes', async () => {
+    account = { userId: 'bob', name: 'Bob' };
+    request.mockImplementation(async (_url, init) => init?.method === 'POST' ? ok({ translation: '你好', revision: selection.revision }) : ok(account));
+    const sync = await import('./learning-sync');
+    await expect(sync.requestAccountTranslation('Hello', 'en', 'zh', selection)).rejects.toThrow('账户已切换');
+  });
+});

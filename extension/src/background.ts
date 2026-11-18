@@ -1,5 +1,5 @@
 import { requestSentenceAnalysis } from "./analysis-provider";
-import { AnalysisAccessError, enqueueLearning, flushLearning, syncStatus } from "./learning-sync";
+import { AnalysisAccessError, enqueueLearning, flushLearning, syncStatus, getAccountTranslationSelection, requestAccountTranslation, type AccountTranslationSelection } from "./learning-sync";
 import { pruneSidebarHistory } from "./shared/sidebar-history";
 import { SYNC_ALARM } from "./shared/learning-sync";
 import { sourceLanguage, shouldSkipTranslation } from "./shared/languages";
@@ -17,6 +17,7 @@ interface TranslationJob {
   priority: "current" | "prefetch";
   settings: Awaited<ReturnType<typeof getSettings>>; source: string;
   signal?: AbortSignal; expectedModel?: string;
+  accountSelection?: AccountTranslationSelection;
   resolve: (value: string) => void; reject: (error: unknown) => void;
 }
 
@@ -101,6 +102,10 @@ function isTencentRateLimit(error: unknown): boolean {
 }
 
 async function runTranslation(job: TranslationJob): Promise<string> {
+  if (job.settings.serviceMode === "tubitle") {
+    const selection = job.accountSelection ?? await getAccountTranslationSelection();
+    return requestAccountTranslation(job.text, job.source, job.settings.targetLanguage, selection, job.signal);
+  }
   if (job.provider === "microsoft") return runMicrosoftTranslation(job);
   const attempts = job.provider === "tencent" ? 3 : 1;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -123,9 +128,12 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
   signal?.throwIfAborted();
   const source = sourceLanguage(text, trackLanguage);
   if (shouldSkipTranslation(source, settings)) return "";
-  const expectedModel = provider === "hy-mt-local" ? await getTubitleModel(settings) : undefined;
+  const accountSelection = settings.serviceMode === "tubitle" ? await getAccountTranslationSelection() : undefined;
+  const expectedModel = !accountSelection && provider === "hy-mt-local" ? await getTubitleModel(settings) : undefined;
   signal?.throwIfAborted();
-  const key = translationKey(expectedModel ? `${provider}:${tubitleConnection(settings).origin}:${expectedModel}` : provider, text, source, settings.targetLanguage);
+  const cacheProvider = accountSelection ? `account:${accountSelection.userId}:${accountSelection.revision}`
+    : expectedModel ? `${provider}:${tubitleConnection(settings).origin}:${expectedModel}` : provider;
+  const key = translationKey(cacheProvider, text, source, settings.targetLanguage);
   const memory = memoryCache.get(key);
   if (memory) return memory;
   const existing = signal ? undefined : pending.get(key);
@@ -135,10 +143,10 @@ async function enqueueTranslation(text: string, provider: TranslationProvider, p
   if (disk) { memoryCache.set(key, disk); return disk; }
   // Cancelable requests belong to one caption session. Do not tie another tab's
   // result to this tab's abort signal. Completed translations still share the cache.
-  if (signal) return scheduleTranslation({ key, text, provider, priority, settings, source, signal, expectedModel });
+  if (signal) return scheduleTranslation({ key, text, provider, priority, settings, source, signal, expectedModel, accountSelection });
   const pendingAfterCacheLookup = pending.get(key);
   if (pendingAfterCacheLookup) return pendingAfterCacheLookup;
-  const promise = scheduleTranslation({ key, text, provider, priority, settings, source, expectedModel }).finally(() => pending.delete(key));
+  const promise = scheduleTranslation({ key, text, provider, priority, settings, source, expectedModel, accountSelection }).finally(() => pending.delete(key));
   pending.set(key, promise);
   return promise;
 }

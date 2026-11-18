@@ -16,7 +16,7 @@ Tubitle 是一个在浏览器扩展中运行的 YouTube 英语学习工具，不
 
 ## 隐私与密钥
 
-翻译和大模型密钥只保存到 `chrome.storage.local`，不会写入网页、同步到 Chrome 云端或发送给 Tubitle 服务。扩展后台只会把字幕原文和对应凭证发送给用户选择的 API 服务商。
+自备 API 模式的个人翻译和大模型密钥只保存到 `chrome.storage.local`，不会写入网页、同步到 Chrome 云端或发送给 Tubitle。默认平台模式需登录，字幕原文通过网站翻译网关发送给后台选定的供应商；平台凭据保留在服务端。
 
 浏览器本地存储不是系统钥匙串。能访问本机浏览器配置或扩展调试环境的软件仍可能读取这些密钥，请使用权限受限、可随时轮换的 API 凭证。
 
@@ -31,7 +31,7 @@ npm run build
 
 打开 `chrome://extensions`，启用开发者模式，选择“加载已解压的扩展程序”，加载 `extension/dist`。随后打开扩展设置，填写所需服务商密钥并点击测试连接。
 
-体验 Tubitle 自研翻译服务：按 [本地服务说明](translation-service/README.md) 准备模型，然后从项目根目录执行 `bash translation-service/service.sh start q4`。在扩展弹窗选择「使用 Tubitle 自研翻译服务」，打开有英文字幕的 YouTube 视频，开启播放器 CC 和扩展的「显示翻译」。字幕由本机模型生成，无需 API 密钥。可用 `restart 2bit` 或 `restart opus` 切换模型，用 `stop` 停止服务。
+体验自建翻译：按 [本地服务说明](translation-service/README.md) 准备模型，从项目根目录执行 `bash translation-service/service.sh start q4`。启动 Web，在后台「设置 → 字幕翻译」选择自建服务，地址填写 `http://127.0.0.1:18081`，本机服务访问密钥可留空，测试后保存。登录网站后，插件选择 Tubitle 模式观看带 CC 的视频。本机地址适用于 Web 与推理运行在同一电脑的开发环境；Cloudflare 部署须改为可访问的 HTTPS 推理地址。
 
 生成可分发的 ZIP 安装包：
 
@@ -88,8 +88,8 @@ npm run build
 
 ### 服务方式
 
-设置默认使用 Tubitle 服务，字幕翻译和 AI 语句分析一起使用平台接口，无需填写密钥。平台 AI 免费版每天 3 次、Pro 每天 100 次，北京时间零点重置，失败退回次数；AI 解析需要登录。网站管理员配置 OpenAI 兼容地址、API Key 和模型。Pro 购买仍未开放。
+设置默认使用 Tubitle 服务，字幕翻译和 AI 语句分析使用平台接口，均需登录，终端用户无需填写密钥。管理员在「设置 → 字幕翻译」配置硅基流动、阿里云机器翻译通用版、微软或自建服务，并手动选择当前供应商；初始为停用，失败不自动切换。平台 AI 解析免费版每天 3 次、Pro 每天 100 次，北京时间零点重置，失败退回次数；解析使用后台 OpenAI 兼容地址、API Key 和模型。Pro 购买仍未开放。
 
 选择「使用自己的 API Key」后才显示 Microsoft / Google 翻译配置，以及 OpenAI 兼容大模型的接口地址、密钥和模型。自备 API 请求从插件直接发送到服务商，不要求 Tubitle 登录，不消耗 Tubitle 额度；费用由用户的 API 账户承担。个人密钥只存在本机，切回平台模式仍保留配置但不再使用。两种模式在登录后都会自动上传学习记录。
 
-开发者发行时设置 `TUBITLE_TRANSLATION_URL=https://translation.example` 与 `TUBITLE_SITE_URL=https://your-domain.example`，构建会写入默认服务地址及对应访问权限。终端用户无需配置 Tubitle 服务地址或访问密钥。本地默认翻译地址为 `http://127.0.0.1:18081`。
+开发者发行时设置 `TUBITLE_SITE_URL=https://your-domain.example`，构建会写入网站地址及对应访问权限。平台翻译通过该网站的 `/api/extension/translation`，供应商地址和密钥从 Web 后台管理，切换无需重发插件。旧的 `TUBITLE_TRANSLATION_URL` 不再用于平台模式。更多配置和 Cloudflare 部署边界见 [Web 说明](web/README.md#platform-subtitle-translation)。

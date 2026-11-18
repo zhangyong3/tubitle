@@ -41,7 +41,7 @@
   "字幕翻译与 AI 语句分析": "Traducción de subtítulos y análisis con IA",
   "使用 Tubitle 服务（默认）": "Usar servicios de Tubitle (predeterminado)",
   "使用自己的 API Key": "Usar tu propia clave API",
-  "由 Tubitle 提供字幕翻译与 AI 语句分析。AI 解析需登录，免费版每天 3 次，Pro 每天 100 次。": "Tubitle ofrece traducción y análisis con IA. El análisis requiere iniciar sesión: 3 usos diarios en Gratis y 100 en Pro.",
+  "由 Tubitle 提供字幕翻译与 AI 语句分析，均需登录。AI 解析免费版每天 3 次，Pro 每天 100 次。": "Inicia sesión para usar la traducción de subtítulos y el análisis de IA de Tubitle. Análisis de IA: 3 usos al día en Gratis y 100 en Pro.",
   "字幕与句子直接发送到你选择的服务商，费用由服务商收取，不消耗 Tubitle 额度。登录后学习记录仍会自动同步。": "Los textos se envían al proveedor elegido, que cobra el servicio, sin usar la cuota de Tubitle. Los registros de aprendizaje siguen sincronizándose al iniciar sesión.",
   "字幕翻译 API": "API de traducción de subtítulos",
   "翻译服务商": "Proveedor de traducción",

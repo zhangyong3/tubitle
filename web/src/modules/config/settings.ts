@@ -5,6 +5,7 @@
  * and they'll automatically appear in the admin panel.
  */
 
+import { TRANSLATION_DEFAULTS } from '@/core/translation/config';
 import {
   APPEARANCE_ENABLED_KEY,
   COLOR_MODE_CONFIG_KEY,
@@ -51,6 +52,7 @@ export function getSettingTabs(): SettingTab[] {
     { name: 'email', title: 'Email' },
     { name: 'storage', title: 'Storage' },
     { name: 'ai', title: 'AI' },
+    { name: 'translation', title: 'Subtitle Translation' },
     { name: 'analytics', title: 'Analytics' },
     { name: 'ads', title: 'Ads' },
     { name: 'customer_service', title: 'Customer Service' },
@@ -61,6 +63,7 @@ export function getSettingTabs(): SettingTab[] {
 
 export function getSettingGroups(): SettingGroup[] {
   return [
+    { name: 'translation', title: 'Subtitle Translation', tab: 'translation' },
     // General
     {
       name: 'appinfo',
@@ -289,6 +292,77 @@ export function getSettingGroups(): SettingGroup[] {
 
 export function getSettings(): Setting[] {
   return [
+    {
+      name: 'translation_provider',
+      title: 'Active provider',
+      type: 'select',
+      group: 'translation',
+      tab: 'translation',
+      defaultValue: 'disabled',
+      options: [
+        { value: 'disabled', label: 'Disabled / 停用' },
+        { value: 'selfhosted', label: 'Self-hosted / 自建服务' },
+        { value: 'siliconflow', label: 'SiliconFlow / 硅基流动' },
+        { value: 'aliyun', label: 'Alibaba Cloud MT / 阿里云机器翻译' },
+        { value: 'microsoft', label: 'Microsoft Translator' },
+      ],
+    },
+    ...[
+      [
+        'translation_selfhosted_endpoint',
+        'Self-hosted URL',
+        'text',
+        'https://translate.example.com',
+      ],
+      ['translation_selfhosted_api_key', 'Self-hosted API key', 'password', ''],
+      [
+        'translation_siliconflow_endpoint',
+        'SiliconFlow base URL',
+        'text',
+        TRANSLATION_DEFAULTS.translation_siliconflow_endpoint!,
+      ],
+      [
+        'translation_siliconflow_api_key',
+        'SiliconFlow API key',
+        'password',
+        '',
+      ],
+      ['translation_siliconflow_model', 'SiliconFlow model', 'text', ''],
+      [
+        'translation_aliyun_endpoint',
+        'Alibaba Cloud MT endpoint',
+        'text',
+        TRANSLATION_DEFAULTS.translation_aliyun_endpoint!,
+      ],
+      [
+        'translation_aliyun_access_key_id',
+        'Alibaba Cloud AccessKey ID',
+        'password',
+        '',
+      ],
+      [
+        'translation_aliyun_access_key_secret',
+        'Alibaba Cloud AccessKey Secret',
+        'password',
+        '',
+      ],
+      [
+        'translation_microsoft_endpoint',
+        'Microsoft endpoint',
+        'text',
+        TRANSLATION_DEFAULTS.translation_microsoft_endpoint!,
+      ],
+      ['translation_microsoft_api_key', 'Microsoft key', 'password', ''],
+      ['translation_microsoft_region', 'Microsoft region', 'text', ''],
+    ].map(([name, title, type, placeholder]): Setting => ({
+      name: name!,
+      title: title!,
+      type: type as 'text' | 'password',
+      placeholder,
+      defaultValue: TRANSLATION_DEFAULTS[name!],
+      group: 'translation',
+      tab: 'translation',
+    })),
     // ─── General / App Info ──────────────────────────────────────────
     {
       name: 'app_name',
@@ -991,7 +1065,14 @@ export function getSettings(): Setting[] {
       tab: 'ai',
     },
 
-    { name: 'openai_model', title: 'Sentence analysis model', type: 'text', group: 'openai', tab: 'ai', tip: 'Required model ID for Tubitle sentence analysis. Daily quota: Free 3, Pro 100.' },
+    {
+      name: 'openai_model',
+      title: 'Sentence analysis model',
+      type: 'text',
+      group: 'openai',
+      tab: 'ai',
+      tip: 'Required model ID for Tubitle sentence analysis. Daily quota: Free 3, Pro 100.',
+    },
 
     // ─── AI / Anthropic ──────────────────────────────────────────────
     {

@@ -3,7 +3,10 @@ import { DEFAULT_SETTINGS } from "./shared/settings";
 import { requestSubtitleTranslation } from "./shared/subtitle-translation";
 import type { ExtensionMessage, MessageResponse } from "./shared/types";
 
+const platform = vi.hoisted(() => ({ discover: vi.fn(), translate: vi.fn() }));
+
 vi.mock("./learning-sync", () => ({
+  getAccountTranslationSelection: platform.discover, requestAccountTranslation: platform.translate,
   syncStatus: async () => ({ connected: false, pending: 0 }), flushLearning: async () => undefined,
   enqueueLearning: async () => undefined, requestAccountAnalysis: vi.fn(), AnalysisAccessError: class extends Error {},
 }));
@@ -28,6 +31,11 @@ describe("subtitle translation from the extension background", () => {
     vi.useFakeTimers();
     vi.resetModules();
     request.mockReset().mockImplementation(async () => translated());
+    platform.discover.mockReset().mockResolvedValue({ userId: "alice", provider: "selfhosted", model: "test-model", revision: "a".repeat(64) });
+    platform.translate.mockReset().mockImplementation(async (text, source, target, selection, signal) => {
+      const response = await fetch("http://127.0.0.1:3100/api/extension/translation", { method: "POST", signal, body: JSON.stringify({ text, source, target, expectedRevision: selection.revision }) });
+      return (await response.json()).translation;
+    });
     vi.stubGlobal("fetch", request);
     let onConnect: (port: unknown) => void;
     vi.stubGlobal("chrome", {
@@ -157,7 +165,7 @@ describe("subtitle translation from the extension background", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
-  it("reserves a local model slot for the subtitle on screen while prefetching", async () => {
+  it("reserves a platform request slot for the subtitle on screen while prefetching", async () => {
     const finish: Array<() => void> = [];
     request.mockImplementation(async (url) => String(url).endsWith("/health")
       ? Response.json({ ready: true, model: "hy-mt2-1.8b-q4" })
@@ -165,7 +173,7 @@ describe("subtitle translation from the extension background", () => {
         finish.push(() => resolve(Response.json({ translation: "本机译文", finishReason: "stop" })));
       }));
     mode = "tubitle";
-    const translations = () => request.mock.calls.filter(([url]) => String(url).endsWith("/v1/translate"));
+    const translations = () => request.mock.calls.filter(([url]) => String(url).endsWith("/api/extension/translation"));
     const local = (text: string, priority: "current" | "prefetch" = "prefetch") => send({
       type: "TRANSLATE", provider: "hy-mt-local", text, sourceLanguage: "en", priority
     });
@@ -175,8 +183,8 @@ describe("subtitle translation from the extension background", () => {
     const current = local("On screen now.", "current");
     await vi.advanceTimersByTimeAsync(0);
     expect(translations()).toHaveLength(4);
-    expect(translations()[3]?.[0]).toBe("http://127.0.0.1:18081/v1/translate");
-    expect(JSON.parse(String(translations()[3]?.[1]?.body))).toEqual({ text: "On screen now.", target: "zh", source: "en", expectedModel: "hy-mt2-1.8b-q4" });
+    expect(translations()[3]?.[0]).toBe("http://127.0.0.1:3100/api/extension/translation");
+    expect(JSON.parse(String(translations()[3]?.[1]?.body))).toEqual({ text: "On screen now.", target: "zh", source: "en", expectedRevision: "a".repeat(64) });
     finish.slice().forEach((resolve) => resolve());
     await vi.advanceTimersByTimeAsync(0);
     expect(translations()).toHaveLength(5);
@@ -190,21 +198,25 @@ describe("subtitle translation from the extension background", () => {
       ? Response.json({ready: true, model: 'test-model'})
       : Response.json({translation: 'Tubitle 译文', finishReason: 'stop'}));
     expect(await subtitle('Use the configured service.')).toEqual({ok: true, data: 'Tubitle 译文'});
-    expect(request.mock.calls.every(([url]) => String(url).startsWith(DEFAULT_SETTINGS.tubitleBaseUrl))).toBe(true);
+    expect(request.mock.calls.every(([url]) => String(url).endsWith("/api/extension/translation"))).toBe(true);
   });
 
-  it("keeps subtitle caches separate when the Tubitle model changes", async () => {
+  it("keeps subtitle caches separate when the platform selection or account changes", async () => {
     mode = "tubitle";
     let model = "hy-mt2-1.8b-q4";
     request.mockImplementation(async (url) => String(url).endsWith("/health")
       ? Response.json({ ready: true, model })
       : Response.json({ translation: model, finishReason: "stop" }));
+    platform.discover.mockImplementation(async () => ({ userId: "alice", provider: "selfhosted", model, revision: model }));
     const local = () => send({ type: "TRANSLATE", provider: "hy-mt-local", text: "Same subtitle.", sourceLanguage: "en" });
     await expect(local()).resolves.toEqual({ ok: true, data: model });
     model = "opus-mt-en-zh-int8";
     await expect(local()).resolves.toEqual({ ok: true, data: model });
     model = "hy-mt2-1.8b-q4";
     await expect(local()).resolves.toEqual({ ok: true, data: model });
-    expect(request.mock.calls.filter(([url]) => String(url).endsWith("/v1/translate"))).toHaveLength(2);
+    expect(request.mock.calls.filter(([url]) => String(url).endsWith("/api/extension/translation"))).toHaveLength(2);
+    platform.discover.mockResolvedValue({ userId: "bob", provider: "selfhosted", model, revision: model });
+    await expect(local()).resolves.toEqual({ ok: true, data: model });
+    expect(request.mock.calls.filter(([url]) => String(url).endsWith("/api/extension/translation"))).toHaveLength(3);
   });
 });
