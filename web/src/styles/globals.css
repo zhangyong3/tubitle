@@ -1596,3 +1596,48 @@ html[lang='en'] .tt-home-hero h1 {
     animation: none;
   }
 }
+
+/* Offline dictionary guide shares the marketing type and color system. */
+.tt-dictionary-guide { padding-block: 70px 90px; }
+.tt-guide-heading { max-width: 860px; padding-bottom: 48px; }
+.tt-guide-heading h1 { font-size: clamp(32px, 4vw, 48px); line-height: 1.3; font-weight: 600; margin: 20px 0; }
+.tt-guide-heading > p:last-child { font-size: 18px; line-height: 1.9; color: var(--muted-foreground); }
+.tt-guide-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 64px; border-top: 1px solid var(--border); padding-top: 42px; }
+.tt-guide-layout aside nav { position: sticky; top: 100px; display: grid; gap: 18px; }
+.tt-guide-layout aside a { font-size: 14px; color: var(--muted-foreground); line-height: 1.6; }
+.tt-guide-layout aside a:hover { color: var(--primary); }
+.tt-guide-body { min-width: 0; font-size: 16px; line-height: 1.85; }
+.tt-guide-body section { scroll-margin-top: 100px; padding-bottom: 42px; }
+.tt-guide-body section + section { border-top: 1px solid var(--border); padding-top: 36px; }
+.tt-guide-body h2 { font-size: clamp(23px, 2.5vw, 29px); font-weight: 550; line-height: 1.4; margin-bottom: 22px; }
+.tt-guide-body h3 { font-size: 17px; font-weight: 600; line-height: 1.6; margin-bottom: 7px; }
+.tt-guide-body p { color: var(--muted-foreground); }
+.tt-guide-body .tt-guide-note { margin-top: 24px; padding: 18px 20px; background: var(--secondary); border-radius: 8px; font-size: 14px; }
+.tt-guide-benefits { display: grid; gap: 26px; }
+.tt-guide-benefits > div { display: flex; align-items: flex-start; gap: 16px; }
+.tt-guide-benefits svg { color: var(--primary); flex-shrink: 0; margin-top: 3px; }
+.tt-guide-resource { margin-top: 24px; }
+.tt-guide-resource a { font-weight: 600; color: var(--primary); text-decoration: underline; text-underline-offset: 4px; }
+.tt-guide-resource p { margin-top: 8px; }
+.tt-guide-folder { display: flex; gap: 10px; align-items: center; margin-top: 24px; padding: 12px 20px; background: var(--secondary); font-size: 14px; border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; }
+.tt-guide-tree { margin: 0; padding: 24px; overflow-x: auto; border: 1px solid var(--border); border-radius: 0 0 8px 8px; font-size: 14px; line-height: 2; background: var(--card); }
+.tt-guide-file-types { margin-block: 24px; }
+.tt-guide-file-types > div { display: grid; grid-template-columns: 65px minmax(0, 1fr); gap: 15px; padding-block: 16px; border-bottom: 1px solid var(--border); }
+.tt-guide-file-types dt { color: var(--primary); font-weight: 600; }
+.tt-guide-file-types dd { color: var(--muted-foreground); }
+.tt-guide-steps { padding-left: 25px; list-style: decimal; }
+.tt-guide-steps li { padding-left: 10px; margin-bottom: 26px; }
+.tt-guide-steps li::marker { color: var(--primary); font-weight: 600; }
+.tt-guide-trouble + .tt-guide-trouble { margin-top: 26px; }
+.tt-guide-end { padding-top: 28px; border-top: 1px solid var(--border); }
+.tt-guide-end .tt-button { margin-top: 22px; }
+.tt-guide-layout a:focus-visible { outline: 2px solid var(--primary); outline-offset: 5px; border-radius: 2px; }
+@media (max-width: 800px) {
+  .tt-dictionary-guide { padding-block: 40px 60px; }
+  .tt-guide-heading { padding-bottom: 30px; }
+  .tt-guide-heading > p:last-child { font-size: 16px; }
+  .tt-guide-layout { grid-template-columns: 1fr; gap: 34px; padding-top: 28px; }
+  .tt-guide-layout aside nav { position: static; gap: 12px; }
+  .tt-guide-body .tt-guide-note { padding: 16px; }
+  .tt-guide-tree { padding: 18px; font-size: 13px; }
+}

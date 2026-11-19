@@ -120,6 +120,13 @@ export function ProductTour() {
                   {m['tubitle.showcase.try']()}
                   <ArrowRight size={17} />
                 </Link>
+                {i === 1 && (
+                  <div>
+                    <Link href="/offline-dictionary" className="tt-text-link">
+                      {m['tubitle.dictionaryGuide.nav']()}
+                    </Link>
+                  </div>
+                )}
               </div>
               <figure className="tt-tour-figure">
                 <a

@@ -10,6 +10,10 @@ export function Footer() {
           links: [
             { label: m['tubitle.nav.features'](), href: '/#features' },
             { label: m['tubitle.nav.pricing'](), href: '/pricing' },
+            {
+              label: m['tubitle.dictionaryGuide.nav'](),
+              href: '/offline-dictionary',
+            },
           ],
         },
         {
