@@ -6,7 +6,7 @@ import { m } from '@/paraglide/messages.js';
 export function CTA() {
   return (
     <section className="tt-container tt-final-cta">
-      <p className="tt-eyebrow">{m['tubitle.hero.eyebrow']()}</p>
+      <p className="tt-eyebrow">{m['tubitle.cta.eyebrow']()}</p>
       <h2>{m['landing.cta.headline']()}</h2>
       <p>{m['landing.cta.subheadline']()}</p>
       <Link href="/settings" className="tt-button">

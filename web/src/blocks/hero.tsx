@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowRight, Captions, Check } from 'lucide-react';
+import { ArrowDown, ArrowRight, Captions, Check, History, ScanText, Search } from 'lucide-react';
 
 import { Link } from '@/core/i18n/navigation';
 import { m } from '@/paraglide/messages.js';
@@ -60,13 +60,14 @@ export function Hero() {
       </figure>
       <div className="tt-capability-strip">
         {[
-          m['tubitle.showcase.tag1'](),
-          m['tubitle.showcase.tag2'](),
-          m['tubitle.showcase.tag3'](),
-          m['tubitle.showcase.tag4'](),
-        ].map((text, i) => (
+          { text: m['tubitle.showcase.tag1'](), icon: Captions },
+          { text: m['tubitle.showcase.tag2'](), icon: Search },
+          { text: m['tubitle.showcase.tag3'](), icon: ScanText },
+          { text: m['tubitle.showcase.tag4'](), icon: History },
+        ].map(({ text, icon: Icon }, i) => (
           <span key={text}>
             <small>0{i + 1}</small>
+            <Icon size={20} strokeWidth={1.6} aria-hidden="true" />
             {text}
           </span>
         ))}

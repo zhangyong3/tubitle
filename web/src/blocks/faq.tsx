@@ -8,13 +8,21 @@ import {
 
 export function FAQ() {
   const items = [
+    { q: m['tubitle.faq.4.q'](), a: m['tubitle.faq.4.a']() },
+    { q: m['tubitle.faq.5.q'](), a: m['tubitle.faq.5.a']() },
     { q: m['tubitle.faq.1.q'](), a: m['tubitle.faq.1.a']() },
     { q: m['tubitle.faq.2.q'](), a: m['tubitle.faq.2.a']() },
+    { q: m['tubitle.faq.6.q'](), a: m['tubitle.faq.6.a']() },
+    { q: m['tubitle.faq.7.q'](), a: m['tubitle.faq.7.a']() },
+    { q: m['tubitle.faq.8.q'](), a: m['tubitle.faq.8.a']() },
     { q: m['tubitle.faq.3.q'](), a: m['tubitle.faq.3.a']() },
   ];
   return (
     <section className="tt-section tt-container tt-faq">
-      <h2>{m['tubitle.faq.title']()}</h2>
+      <div>
+        <p className="tt-eyebrow">FAQ</p>
+        <h2>{m['tubitle.faq.title']()}</h2>
+      </div>
       <Accordion>
         {items.map((item, i) => (
           <AccordionItem key={i} value={String(i)}>

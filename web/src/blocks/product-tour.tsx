@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import {
   ArrowRight,
-  BookOpen,
   Captions,
   History,
   ScanText,
   Search,
+  ArrowUpRight,
 } from 'lucide-react';
 
 import { Link } from '@/core/i18n/navigation';
@@ -63,7 +63,6 @@ export function ProductTour() {
             <p className="tt-eyebrow">{m['tubitle.showcase.eyebrow']()}</p>
             <h2>{m['tubitle.showcase.title']()}</h2>
           </div>
-          <p>{m['tubitle.showcase.description']()}</p>
         </div>
         <div
           className="tt-tour-tabs"
@@ -142,54 +141,40 @@ export function ProductTour() {
           ))}
         </div>
       </section>
-      <section className="tt-library-story">
-        <div className="tt-container">
-          <div className="tt-section-heading">
-            <div>
-              <p className="tt-eyebrow">
-                <BookOpen size={15} />
-                {m['tubitle.showcase.libraryEyebrow']()}
-              </p>
-              <h2>{m['tubitle.showcase.libraryTitle']()}</h2>
-            </div>
-            <div>
-              <p>{m['tubitle.showcase.libraryText']()}</p>
-              <Link href="/settings" className="tt-text-link">
-                {m['tubitle.nav.library']()}
-                <ArrowRight size={17} />
-              </Link>
-            </div>
-          </div>
-          <div className="tt-library-evidence">
-            <figure>
-              <a
-                href="/images/product/library-detail.jpg"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <img
-                  src="/images/product/library-detail.jpg"
-                  width="1460"
-                  height="550"
-                  loading="lazy"
-                  alt={m['tubitle.showcase.sentenceTitle']()}
-                />
-              </a>
-              <figcaption>{m['tubitle.showcase.analysisCaption']()}</figcaption>
-            </figure>
-            <div className="tt-library-list">
-              {[
-                m['tubitle.showcase.library1'](),
-                m['tubitle.showcase.library2'](),
-                m['tubitle.showcase.library3'](),
-                m['tubitle.showcase.library4'](),
-              ].map((text, i) => (
-                <div key={text}>
-                  <span>0{i + 1}</span>
-                  <p>{text}</p>
-                </div>
-              ))}
-            </div>
+      <section className="tt-section tt-container tt-library-story">
+        <div className="tt-section-heading">
+          <p className="tt-eyebrow">{m['tubitle.showcase.libraryEyebrow']()}</p>
+          <h2>{m['tubitle.showcase.libraryTitle']()}</h2>
+        </div>
+        <div className="tt-library-evidence">
+          <figure>
+            <a
+              href="/images/product/library-review.jpg"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img
+                src="/images/product/library-review.jpg"
+                width="1676"
+                height="1008"
+                loading="lazy"
+                alt={m['tubitle.showcase.sentenceTitle']()}
+              />
+            </a>
+            <figcaption>{m['tubitle.showcase.analysisCaption']()}</figcaption>
+          </figure>
+          <div className="tt-library-list">
+            {[
+              m['tubitle.showcase.library1'](),
+              m['tubitle.showcase.library2'](),
+              m['tubitle.showcase.library3'](),
+              m['tubitle.showcase.library4'](),
+            ].map((text, i) => (
+              <div key={text}>
+                <span>0{i + 1}</span>
+                <p>{text}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -198,16 +183,36 @@ export function ProductTour() {
         <h2>{m['tubitle.showcase.interestsTitle']()}</h2>
         <div className="tt-interest-list">
           {[
-            m['tubitle.showcase.interest1'](),
-            m['tubitle.showcase.interest2'](),
-            m['tubitle.showcase.interest3'](),
-          ].map((text, i) => (
+            { text: m['tubitle.showcase.interest1'](), name: "Luke's English Podcast", handle: 'LukesEnglishPodcast' },
+            { text: m['tubitle.showcase.interest2'](), name: 'Stanford Online', handle: 'stanfordonline' },
+            { text: m['tubitle.showcase.interest3'](), name: 'BBC Earth', handle: 'bbcearth' },
+          ].map(({ text, name, handle }, i) => (
             <div key={text}>
               <span>
                 {['01 / PODCASTS', '02 / KNOWLEDGE', '03 / EVERYDAY LIFE'][i]}
               </span>
               <h3>{text.split('|')[0]}</h3>
               <p>{text.split('|')[1]}</p>
+              <a
+                className="tt-channel-example"
+                href={`https://www.youtube.com/@${handle}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${name} · ${m['tubitle.showcase.channelVisit']()}`}
+              >
+                <img
+                  src={`/images/channels/${handle.toLowerCase()}.jpg`}
+                  alt={`${name} logo`}
+                  width="48"
+                  height="48"
+                  loading="lazy"
+                />
+                <span className="tt-channel-copy">
+                  <small>{m['tubitle.showcase.channelExample']()}</small>
+                  <strong>{name}</strong>
+                </span>
+                <ArrowUpRight size={17} aria-hidden="true" />
+              </a>
             </div>
           ))}
         </div>

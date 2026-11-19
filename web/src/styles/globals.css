@@ -1150,8 +1150,9 @@ html[lang='en'] .tt-home-hero h1 {
   background: #c7b6ff;
 }
 .tt-capability-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
   padding: 28px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -1160,6 +1161,11 @@ html[lang='en'] .tt-home-hero h1 {
   gap: 14px;
   align-items: center;
   font-size: 13px;
+  white-space: nowrap;
+}
+.tt-capability-strip svg {
+  flex-shrink: 0;
+  color: var(--primary);
 }
 .tt-capability-strip small {
   color: var(--primary);
@@ -1176,7 +1182,7 @@ html[lang='en'] .tt-home-hero h1 {
 .tt-section-heading h2 {
   margin-top: 18px;
 }
-.tt-section-heading > p,
+.tt-section-heading > p:not(.tt-eyebrow),
 .tt-section-heading > div > p:not(.tt-eyebrow) {
   color: var(--muted-foreground);
   font-size: 14px;
@@ -1241,7 +1247,7 @@ html[lang='en'] .tt-home-hero h1 {
 }
 .tt-tour-detail {
   display: flex;
-  align-items: start;
+  align-items: center;
   gap: 13px;
   border-top: 1px solid var(--border);
   margin-top: 30px;
@@ -1250,9 +1256,10 @@ html[lang='en'] .tt-home-hero h1 {
 .tt-tour-detail svg {
   flex-shrink: 0;
   color: var(--primary);
-  margin-top: 3px;
+  display: block;
 }
 .tt-tour-detail p {
+  margin: 0;
   font-size: 12px;
   line-height: 1.85;
   color: var(--muted-foreground);
@@ -1285,9 +1292,8 @@ html[lang='en'] .tt-home-hero h1 {
   color: var(--muted-foreground);
   margin-top: 12px;
 }
-.tt-library-story {
-  background: var(--secondary);
-  padding-block: 74px;
+.tt-library-story .tt-section-heading {
+  display: block;
 }
 .tt-library-story h2 {
   font-size: clamp(28px, 3vw, 38px);
@@ -1340,10 +1346,12 @@ html[lang='en'] .tt-home-hero h1 {
   margin-top: 38px;
 }
 .tt-interest-list > div {
+  display: flex;
+  flex-direction: column;
   border-top: 1px solid var(--border);
   padding-top: 22px;
 }
-.tt-interest-list span {
+.tt-interest-list > div > span {
   color: var(--primary);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -1357,6 +1365,50 @@ html[lang='en'] .tt-home-hero h1 {
   font-size: 14px;
   line-height: 1.85;
   color: var(--muted-foreground);
+}
+.tt-channel-example {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: auto;
+  padding-top: 28px;
+  color: var(--foreground);
+}
+.tt-channel-example img {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.tt-channel-copy {
+  display: grid;
+  gap: 5px;
+}
+.tt-channel-copy small {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.tt-channel-copy strong {
+  font-size: 14px;
+  font-weight: 550;
+}
+.tt-channel-example > svg {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--primary);
+}
+.tt-channel-example:hover strong {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.tt-channel-example:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 6px;
+  border-radius: 4px;
+}
+.tt-channel-example:active {
+  transform: translateY(1px);
 }
 .tt-final-cta {
   position: relative;
@@ -1480,6 +1532,7 @@ html[lang='en'] .tt-home-hero h1 {
     gap: 5px;
   }
   .tt-capability-strip {
+    display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 20px 10px;
     padding-block: 23px;
@@ -1508,9 +1561,6 @@ html[lang='en'] .tt-home-hero h1 {
   .tt-tour-detail {
     margin-top: 22px;
     padding-top: 18px;
-  }
-  .tt-library-story {
-    padding-block: 45px;
   }
   .tt-library-evidence figure {
     padding: 10px;

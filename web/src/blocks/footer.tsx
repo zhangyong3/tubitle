@@ -4,7 +4,6 @@ import { SiteFooter } from '@/components/site-footer';
 export function Footer() {
   return (
     <SiteFooter
-      tagline={m['tubitle.footer.tagline']()}
       columns={[
         {
           title: m['tubitle.footer.product'](),
