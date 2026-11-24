@@ -10,7 +10,7 @@ describe("persisted interface language", () => {
     const set = vi.fn();
     vi.stubGlobal("chrome", { storage: { local: { get: async () => ({ settings: saved }), set } } });
     const migrated = await getSettings();
-    expect(migrated).toMatchObject({ uiLanguage: DEFAULT_SETTINGS.uiLanguage, targetLanguage: "de", llmApiKey: "local-key", settingsVersion: 11 });
+    expect(migrated).toMatchObject({ uiLanguage: DEFAULT_SETTINGS.uiLanguage, targetLanguage: "de", llmApiKey: "local-key", settingsVersion: 12 });
     expect(set).toHaveBeenCalledOnce();
   });
 

@@ -1,3 +1,4 @@
+import { ONLINE_DICTIONARIES } from "./shared/online-dictionaries";
 import { keylessRequest } from "./keyless-providers";
 import { translateInChrome } from "./shared/chrome-translator";
 import { t, initializeI18n, UI_LANGUAGES, setUiLanguage, getUiLanguage } from "./shared/i18n";
@@ -27,6 +28,7 @@ const categories = [
     { id: "language", label: "翻译语言" }, { id: "interaction", label: "字幕交互" }, { id: "appearance", label: "字幕样式" }
   ] },
   { id: "services", label: "服务与 API", icon: "services", description: "选择字幕翻译和 AI 语句分析的服务方式。" },
+  { id: "online-dictionary", label: "在线词典", icon: "dictionary", description: "选择查词时使用的在线词典，可多选。" },
   { id: "dictionary", label: "离线词典", icon: "dictionary", description: "导入本地词典，随时查阅单词释义。" },
   { id: "shortcuts", label: "快捷键", icon: "shortcuts", description: "按你的习惯设置播放与学习快捷键。" }
 ] as const;
@@ -295,6 +297,22 @@ export function App() {
         </section>
         {(form.serviceMode === "custom" || form.analysisServiceMode === "custom") && <div className="permission-note"><p className="hint">{t("设置会自动保存。首次使用自定义 API 域名时，需要允许浏览器访问该域名。")}</p><button className="secondary" type="button" onClick={() => void requestApiPermissions(form).then((allowed) => setProviderMessage(allowed ? "已允许访问 API 域名" : "未获得 API 域名访问权限")).catch((error: Error) => setProviderMessage(error.message))}>{t("允许访问 API 域名")}</button></div>}
         {providerMessage && <p className="hint" role="status">{t(providerMessage)}</p>}
+        </div>
+        <div hidden={activeCategory !== "online-dictionary"}>
+          <section className="card"><h2>{t("在线词典（可多选）")}</h2>
+            <p className="hint">{t("查词时分别显示所选词典结果，单个词典失败不会影响其他词典或离线词典。")}</p>
+            <div className="grid">{ONLINE_DICTIONARIES.map(([id,name,origin])=><label key={id}>
+              <input type="checkbox" checked={form.onlineDictionaries.includes(id)} onChange={event=>{
+                const checked=event.target.checked;
+                void (async()=>{
+                  if(checked && id!=="wordnet" && !await chrome.permissions.request({origins:[origin]})){setProviderMessage("未获得词典域名访问权限");return;}
+                  setForm(current=>({...current,onlineDictionaries:checked?[...current.onlineDictionaries.filter(value=>value!==id),id]:current.onlineDictionaries.filter(value=>value!==id)}));
+                })().catch(()=>setProviderMessage("未获得词典域名访问权限"));
+              }}/>{t(name)}
+            </label>)}</div>
+            <p className="hint">{t("WordNet 仅支持英语；必应主要支持英汉；有道支持英、中、日、韩、法语。其他语种可使用离线词典，或在词典网站继续查询。")}</p>
+            {providerMessage && <p className="hint" role="status">{t(providerMessage)}</p>}
+          </section>
         </div>
         <div hidden={activeCategory !== "subtitles"}>
         <section className="card">

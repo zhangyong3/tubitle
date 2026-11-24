@@ -1,3 +1,4 @@
+import { dictionaryTokens } from "../shared/dictionary-lookup";
 import { t } from "../shared/i18n";
 import type {
   CaptionSentence,
@@ -30,10 +31,7 @@ const STYLES = `
   .status{display:none;margin:0 auto 8px;width:max-content;max-width:80vw;padding:7px 11px;border-radius:8px;background:rgba(12,13,18,.85);color:#d9dae2;font-size:12px}.status.visible{display:block}.status.error{color:#ffb4b4}
 `;
 
-function tokenize(text: string): Array<{ value: string; word: boolean }> {
-  const tokens = text.match(/[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*|[^\p{L}\p{M}]+/gu) ?? [];
-  return tokens.map((value) => ({ value, word: /^[\p{L}\p{M}]/u.test(value) }));
-}
+const tokenize = dictionaryTokens;
 
 export class SubtitleOverlay {
   private readonly host = document.createElement("div");

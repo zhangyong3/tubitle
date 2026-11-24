@@ -24,6 +24,7 @@ export interface ExtensionSettings {
   settingsVersion: number;
   uiLanguage: import("./ui-language").UiLanguage;
   serviceMode: import("./service-mode").ServiceMode;
+  onlineDictionaries: import("./online-dictionaries").OnlineDictionary[];
   analysisServiceMode: import("./service-mode").ServiceMode;
   enabled: boolean;
   showChinese: boolean;
@@ -94,6 +95,7 @@ export interface TranscriptPanelSentence extends CaptionSentence {
 }
 
 export interface TranscriptPanelSnapshot {
+  sourceLanguage?: string;
   videoId: string;
   videoTitle: string;
   sentences: TranscriptPanelSentence[];

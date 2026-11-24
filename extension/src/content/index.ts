@@ -110,6 +110,7 @@ function transcriptSnapshot(video = videoElement()): TranscriptPanelSnapshot {
   return {
     videoId: captionVideoId ?? "",
     videoTitle: currentVideoTitle(),
+    sourceLanguage: captionLanguage,
     sentences: sentences.map((sentence) => ({
       ...sentence,
       translationSkipped: skipSentenceTranslation(sentence),

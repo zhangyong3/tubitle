@@ -1,3 +1,6 @@
+import { OnlineDictionaries } from "./online-dictionaries";
+import { dictionaryLanguage, normalizeOnlineDictionaries, type OnlineDictionary } from "./shared/online-dictionaries";
+import { LANGUAGES } from "./shared/languages";
 import { HistoryDeleteButton } from "./history-delete-button";
 import { t, initializeI18n, getUiLanguage } from "./shared/i18n";
 import { useI18n } from "./shared/use-i18n";
@@ -20,7 +23,7 @@ import type {
   TranscriptPanelSnapshot,
   TranscriptPanelTab
 } from "./shared/types";
-import { normalizeDictionaryWord, selectDictionaryCandidates } from "./shared/dictionary-lookup";
+import { normalizeDictionaryText, normalizeDictionaryWord, selectDictionaryCandidates } from "./shared/dictionary-lookup";
 import { sanitizeDictionaryHtml } from "./shared/dictionary-sanitize";
 import { loadDictionaryCss } from "./shared/dictionary-presentation";
 import { prepareDictionaryAudio } from "./shared/dictionary-audio";
@@ -39,7 +42,6 @@ import {
   recordAnalysisHistory,
   recordDictionaryHistory,
   recordTranslationHistory,
-  saveWordNetLookup,
   SIDEBAR_HISTORY_KEY,
   filterRecentHistory,
   groupHistoryByDate,
@@ -49,10 +51,7 @@ import {
 
 import { buildTranscriptNotes, formatCaptionTime } from "./shared/transcript-notes";
 
-import {
-  lookupWordNet, PRINCETON_LICENSE, PRINCETON_NOTICE,
-  WORDNET_COPYRIGHT, WORDNET_LICENSE, WORDNET_NAME, WORDNET_SITE, type WordNetLookup
-} from "./shared/wordnet";
+
 
 type SidebarTab = TranscriptPanelTab;
 
@@ -228,8 +227,8 @@ function App() {
   const [transcriptAutoFollow, setTranscriptAutoFollow] = useState(true);
   const [result, setResult] = useState<LookupResult>();
   const [lookup, setLookup] = useState<{ word: string }>();
-  const [wordNetResult, setWordNetResult] = useState<WordNetLookup>();
-  const [wordNetError, setWordNetError] = useState(false);
+  const [onlineProviders, setOnlineProviders] = useState<OnlineDictionary[]>(["wordnet"]);
+  const [lookupLanguage, setLookupLanguage] = useState("auto");
   const [offlineConfigured, setOfflineConfigured] = useState(false);
   const [offlineRevision, setOfflineRevision] = useState(0);
   const wordNetController = useRef<AbortController | undefined>(undefined);
@@ -351,7 +350,7 @@ function App() {
   }
 
   async function search(input: string, saveToHistory = true) {
-    const word = normalizeDictionaryWord(input);
+    const word = normalizeDictionaryText(input);
     if (!word) return;
     wordNetController.current?.abort();
     const controller = new AbortController();
@@ -360,8 +359,7 @@ function App() {
     setLookup({ word });
     setPlaybackError("");
     setResult(undefined);
-    setWordNetResult(undefined);
-    setWordNetError(false);
+
     const lookupSnapshot = transcriptRef.current;
     const lookupSentence = lookupSnapshot?.sentences[lookupSnapshot.activeIndex];
     try {
@@ -369,7 +367,7 @@ function App() {
         ? recordDictionaryHistory(word, historyRetentionDaysRef.current, { videoId: lookupSnapshot?.videoId, videoTitle: lookupSnapshot?.videoTitle, startMs: lookupSentence?.startMs ?? lookupSnapshot?.currentTimeMs, context: lookupSentence?.text })
         : getSidebarHistory()).catch(() => []);
       if (saveToHistory) {
-        const entry = entries.find((item) => item.type === "dictionary" && normalizeDictionaryWord(item.word) === word);
+        const entry = entries.find((item) => item.type === "dictionary" && normalizeDictionaryWord(item.word) === normalizeDictionaryWord(word));
         void sendMessage({ type: "LEARNING_SYNC_ENQUEUE", record: {
           clientRecordId: entry?.id || crypto.randomUUID(), kind: "word", text: word,
           context: lookupSentence?.text || "", note: lookupSentence?.translation ? `语境译文：${lookupSentence.translation}` : "",
@@ -378,18 +376,8 @@ function App() {
         } }).catch(() => undefined);
       }
       if (controller.signal.aborted) return;
-      const cached = entries.find((entry) =>
-        entry.type === "dictionary" && normalizeDictionaryWord(entry.word) === word);
-      if (cached?.type === "dictionary" && cached.wordNet?.length) {
-        setWordNetResult({ lemma: cached.wordNetLemma ?? word, senses: cached.wordNet });
-        return;
-      }
-      const match = await lookupWordNet(word, controller.signal);
-      if (controller.signal.aborted) return;
-      if (match.senses.length) await saveWordNetLookup(word, match, historyRetentionDaysRef.current).catch(() => undefined);
-      if (!controller.signal.aborted) setWordNetResult(match);
     } catch {
-      if (!controller.signal.aborted) setWordNetError(true);
+      // Online and offline lookups remain independent of history persistence.
     }
   }
 
@@ -419,6 +407,7 @@ function App() {
       getSettings()
     ]).then(([stored, settings]) => {
       setOfflineConfigured(settings.offlineDictionary.configured);
+      setOnlineProviders(settings.onlineDictionaries);
       setAutoReturnSeconds(settings.autoReturnToSubtitlesSeconds);
       historyRetentionDaysRef.current = settings.historyRetentionDays;
       setHistoryRetentionDays(settings.historyRetentionDays);
@@ -444,6 +433,7 @@ function App() {
         const next = changes.settings.newValue as ExtensionSettings | undefined;
         setAutoReturnSeconds(normalizeAutoReturnSeconds(next?.autoReturnToSubtitlesSeconds));
         setOfflineConfigured(Boolean(next?.offlineDictionary?.configured));
+        setOnlineProviders(normalizeOnlineDictionaries(next?.onlineDictionaries));
         const nextHistoryRetentionDays = next?.historyRetentionDays ?? DEFAULT_HISTORY_RETENTION_DAYS;
         historyRetentionDaysRef.current = nextHistoryRetentionDays;
         setHistoryRetentionDays(nextHistoryRetentionDays);
@@ -627,9 +617,15 @@ function App() {
           <>
             <div className="dictionary-heading">
               <h1 className="word">{lookup.word}</h1>
-              <a className="dictionary-link" href={`https://www.ldoceonline.com/search/?${new URLSearchParams({ q: lookup.word })}`}
-                target="_blank" rel="noopener noreferrer">{t("在朗文查看")}<span aria-hidden="true">↗</span></a>
+              {dictionaryLanguage(lookup.word, lookupLanguage === "auto" ? transcript?.sourceLanguage : lookupLanguage) === "en" && <a className="dictionary-link" href={`https://www.ldoceonline.com/search/?${new URLSearchParams({ q: lookup.word })}`}
+                target="_blank" rel="noopener noreferrer">{t("在朗文查看")}<span aria-hidden="true">↗</span></a>}
             </div>
+            <label className="dictionary-language">{t("词条语言")}
+              <select aria-label={t("词条语言")} value={lookupLanguage} onChange={event=>setLookupLanguage(event.target.value)}>
+                <option value="auto">{t("自动（跟随字幕语言）")}</option>
+                {LANGUAGES.filter(([code])=>code!=="zh-TW").map(([code,label])=><option key={code} value={code}>{t(label)}</option>)}
+              </select>
+            </label>
             {offlineConfigured && (
               <section className="dictionary-source" aria-labelledby="offline-heading">
                 <h2 id="offline-heading">{t("离线词典")}</h2>
@@ -644,43 +640,16 @@ function App() {
                       onPlaybackError={setPlaybackError}
                     />
                   ) : <div className="status empty">{t("离线词典中没有找到完全匹配的词条。")}</div>}
-                {!!result?.suggestions.length && (
-                  <div className="suggestions"><div className="brand">{t("相关词条")}</div>{result.suggestions.map((word) => (
-                    <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
-                  ))}</div>
-                )}
               </section>
             )}
-            <section className="dictionary-source" aria-labelledby="wordnet-heading">
-              <h2 id="wordnet-heading">{WORDNET_NAME}</h2>
-              <div aria-live="polite">
-                {wordNetError ? <div className="status error">{t("暂时无法加载 WordNet 释义。")}</div>
-                  : !wordNetResult ? <div className="status">{t("正在查询 WordNet…")}</div>
-                  : !wordNetResult.senses.length ? <div className="status empty">{t("WordNet 中没有找到这个词条。")}</div>
-                  : <>
-                    {wordNetResult.lemma !== lookup.word && (
-                      <p className="brand">{t("按原形查到：")}<strong lang="en">{wordNetResult.lemma}</strong></p>
-                    )}
-                    <ol className="wordnet-senses" lang="en">{wordNetResult.senses.map((sense, index) => (
-                      <li key={index}>
-                        {sense.partOfSpeech && <span className="wordnet-pos">{sense.partOfSpeech}</span>}
-                        {sense.definitions.map((definition, i) => <div key={i}>{definition}</div>)}
-                        {sense.examples.map((example, i) => <blockquote key={i}>“{example}”</blockquote>)}
-                      </li>
-                    ))}</ol>
-                  </>}
-              </div>
-              <details className="dictionary-credit">
-                <summary>{t("WordNet 版权与许可 · CC BY 4.0")}</summary>
-                <p>
-                  <a href={WORDNET_SITE} target="_blank" rel="noopener noreferrer">{WORDNET_NAME}</a> · {WORDNET_COPYRIGHT}
-                  {" "}<a href={WORDNET_LICENSE} target="_blank" rel="noopener noreferrer">CC BY 4.0</a>{t("· 节选释义和例句，重新排版。")}</p>
-                <p lang="en">{PRINCETON_NOTICE}</p>
-                <a href={PRINCETON_LICENSE} target="_blank" rel="noopener noreferrer">{t("Princeton WordNet 许可原文")}</a>
-              </details>
-            </section>
+            <OnlineDictionaries word={lookup.word} language={lookupLanguage === "auto" ? dictionaryLanguage(lookup.word, transcript?.sourceLanguage) : lookupLanguage} providers={onlineProviders} historyDays={historyRetentionDays} />
+            {offlineConfigured && !!result?.suggestions.length && (
+              <div className="suggestions"><div className="brand">{t("相关词条")}</div>{result.suggestions.map((word) => (
+                <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
+              ))}</div>
+            )}
           </>
-        ) : <div className="status">{t("在 YouTube 字幕中双击英文单词，即可在这里查询。")}</div>}
+        ) : <div className="status">{t("在 YouTube 字幕中双击词语，即可在这里查询。")}</div>}
       </main>
     </div>
   );

@@ -1,0 +1,5 @@
+import {lookupOnlineDictionary,dictionaryUrl} from '../extension/src/shared/online-dictionaries.ts';
+import{writeFile}from'node:fs/promises';
+for(const [provider,word,language] of [['youdao','learn','en'],['youdao','bonjour','fr'],['youdao','こんにちは','ja'],['youdao','안녕','ko'],['youdao','学习','zh'],['wordnet','learn','en']] as const){
+try{const result=await lookupOnlineDictionary(provider,word,language,new AbortController().signal);console.log(JSON.stringify({provider,word,language,senses:result.senses.length,sample:result.senses[0]?.definitions[0]?.slice(0,80)}));}catch(error){console.log(JSON.stringify({provider,language,error:(error as Error).message}));}}
+try{const response=await fetch(dictionaryUrl('bing','learn','en'),{credentials:'omit',redirect:'error',signal:AbortSignal.timeout(10000)});const html=await response.text();await writeFile('/private/tmp/tubitle-bing-dictionary.html',html);console.log(JSON.stringify({provider:'bing',status:response.status,hasHeadword:html.includes('headword')}));}catch(error){console.log(JSON.stringify({provider:'bing',error:(error as Error).message}));}
