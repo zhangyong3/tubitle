@@ -2,6 +2,7 @@ type MinIntervalOptions = {
   intervalMs: number;
   keyPrefix?: string;
   extraKey?: string;
+  burst?: number;
 };
 
 type Store = Map<string, number>;
@@ -60,12 +61,16 @@ export function enforceMinIntervalRateLimit(
   const store = getStore();
   const key = buildKey(request, opts);
   const last = store.get(key);
+  const burst = Math.max(1, Math.floor(Number(opts.burst) || 1));
+  // Reserve one interval per accepted request, allowing a bounded burst.
+  // With burst=1 this retains the original minimum-interval behavior.
+  const next = Math.max(last ?? now - intervalMs, now - intervalMs) + intervalMs;
+  const waitMs = next - now - (burst - 1) * intervalMs;
   if (typeof last === 'number') {
-    const delta = now - last;
-    if (delta >= 0 && delta < intervalMs) {
+    if (waitMs > 0) {
       const retryAfterSeconds = Math.max(
         1,
-        Math.ceil((intervalMs - delta) / 1000)
+        Math.ceil(waitMs / 1000)
       );
       return Response.json(
         {
@@ -83,6 +88,6 @@ export function enforceMinIntervalRateLimit(
     }
   }
   prune(store, now);
-  store.set(key, now);
+  store.set(key, next);
   return null;
 }

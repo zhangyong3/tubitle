@@ -14,6 +14,7 @@ export async function authorizeLearning(request: Request) {
   }
   const limited = enforceMinIntervalRateLimit(request, {
     intervalMs: isWrite ? 100 : 20,
+    burst: isWrite ? 1 : 20,
     keyPrefix: 'learning-ip',
   });
   if (limited) return { response: limited };
@@ -22,6 +23,7 @@ export async function authorizeLearning(request: Request) {
     return { response: respErr('Unauthorized', { status: 401 }) };
   const userLimited = enforceMinIntervalRateLimit(request, {
     intervalMs: isWrite ? 150 : 30,
+    burst: isWrite ? 1 : 20,
     keyPrefix: 'learning-user',
     extraKey: session.user.id,
   });

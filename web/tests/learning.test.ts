@@ -265,3 +265,39 @@ test('extension account discovery accepts credentialed GET without Origin but st
   const write = await authorizeExtension(new Request(url, { method: 'POST', headers }));
   assert.equal(write.response?.status, 403);
 });
+
+
+test('library can refresh four loaded pages in a burst and still limits sustained reads', async () => {
+  const { testLogin } = await import('./helpers/login');
+  const login = await testLogin('library-pagination');
+  globalThis.__minIntervalRateLimitStore = new Map();
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    for (let page = 1; page <= 4; page++) {
+      const response = await handleLearning(new Request(`http://localhost:3000/api/learning?page=${page}`, {
+        headers: { cookie: login.cookie },
+      }));
+      assert.equal(response.status, 200, `page ${page}: ${await response.text()}`);
+    }
+    let limited: Response | undefined;
+    for (let page = 5; page <= 30; page++) {
+      const response = await handleLearning(new Request(`http://localhost:3000/api/learning?page=${page}`, {
+        headers: { cookie: login.cookie },
+      }));
+      if (response.status === 429) { limited = response; break; }
+      assert.equal(response.status, 200);
+    }
+    assert.ok(limited, 'a sustained burst must still be rate limited');
+    assert.equal(limited.headers.get('retry-after'), '1');
+    now += 30;
+    const recovered = await handleLearning(new Request('http://localhost:3000/api/learning?page=1', {
+      headers: { cookie: login.cookie },
+    }));
+    assert.equal(recovered.status, 200, 'read capacity recovers after an interval');
+  } finally {
+    Date.now = realNow;
+    globalThis.__minIntervalRateLimitStore = new Map();
+  }
+});

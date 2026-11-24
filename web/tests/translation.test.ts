@@ -164,6 +164,31 @@ test('SiliconFlow uses its own model, rejects truncation, and versions only acti
   await assert.rejects(translate(config, input, selection), /不完整/);
 });
 
+test('SiliconFlow enforces Traditional Chinese even when the model returns Simplified Chinese', async () => {
+  const config = {
+    translation_provider: 'siliconflow',
+    translation_siliconflow_api_key: 'sf-key',
+    translation_siliconflow_model: 'test-model',
+  };
+  const selection = await discoverTranslation(config);
+  globalThis.fetch = async (_url, init) => {
+    const payload = JSON.parse(String(init?.body));
+    assert.match(payload.messages[0].content, /Traditional Chinese/);
+    return Response.json({ choices: [{ finish_reason: 'stop', message: {
+      content: '学习语言，让记忆与世界再次相逢。Language learning 123',
+    } }] });
+  };
+  for (const target of ['zh-TW', 'zh-Hant']) {
+    assert.equal((await translate(config, { ...input, target }, selection)).translation,
+      '學習語言，讓記憶與世界再次相逢。Language learning 123');
+  }
+  globalThis.fetch = async () => Response.json({ choices: [{ finish_reason: 'stop', message: {
+    content: '学习语言。',
+  } }] });
+  assert.equal((await translate(config, input, selection)).translation, '学习语言。');
+  assert.equal((await translate(config, { ...input, target: 'ja' }, selection)).translation, '学习语言。');
+});
+
 test('Aliyun signs form data with ACS3 and rejects business failures', async () => {
   const config = {
     translation_provider: 'aliyun',

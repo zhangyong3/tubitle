@@ -1392,6 +1392,7 @@
   "tubitle.library.noResults": "没有找到匹配的记录",
   "tubitle.library.retry": "重新加载",
   "tubitle.library.error": "暂时无法加载学习记录，请重试。",
+  "tubitle.library.refreshError": "学习记录刷新失败，已加载的记录仍可继续查看和复习。",
   "tubitle.library.loading": "正在加载学习记录…",
   "tubitle.library.video": "回到视频",
   "tubitle.library.delete": "删除",

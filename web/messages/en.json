@@ -1392,6 +1392,7 @@
   "tubitle.library.noResults": "No matching expressions",
   "tubitle.library.retry": "Try again",
   "tubitle.library.error": "We could not load your learning records. Please try again.",
+  "tubitle.library.refreshError": "We could not refresh your learning records. Your loaded records are still available.",
   "tubitle.library.loading": "Loading your expressions…",
   "tubitle.library.video": "Back to video",
   "tubitle.library.delete": "Delete",
