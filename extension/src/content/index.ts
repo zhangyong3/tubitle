@@ -1,3 +1,4 @@
+import { subtitleDisplayMode, subtitleDisplayPatch, subtitleTranslationEnabled } from "../shared/subtitle-display";
 import { requestChromeTranslation } from "../shared/chrome-translator";
 import { SYNC_STATE_KEY } from "../shared/learning-sync";
 import { PlaybackActivity } from "../shared/learning-activity";
@@ -111,18 +112,19 @@ function transcriptSnapshot(video = videoElement()): TranscriptPanelSnapshot {
     videoId: captionVideoId ?? "",
     videoTitle: currentVideoTitle(),
     sourceLanguage: captionLanguage,
-    sentences: sentences.map((sentence) => ({
+    displayMode: subtitleDisplayMode(settings),
+    sentences: settings.hideSubtitles ? [] : sentences.map((sentence) => ({
       ...sentence,
-      translationSkipped: skipSentenceTranslation(sentence),
-      translation: officialTranslations.get(sentence.id) || translations.get(translationKey(sentence, settings.provider)),
-      translationError: translationErrors.get(sentence.id)
+      translationSkipped: !subtitleTranslationEnabled(settings) || skipSentenceTranslation(sentence),
+      translation: subtitleTranslationEnabled(settings) ? officialTranslations.get(sentence.id) || translations.get(translationKey(sentence, settings.provider)) : undefined,
+      translationError: subtitleTranslationEnabled(settings) ? translationErrors.get(sentence.id) : undefined
     })),
     activeIndex,
     currentTimeMs: (video?.currentTime ?? 0) * 1000,
     durationMs: Number.isFinite(video?.duration) ? (video?.duration ?? 0) * 1000 : 0,
-    loading: transcriptLoading,
+    loading: !settings.hideSubtitles && transcriptLoading,
     positionPending,
-    error: transcriptError || undefined
+    error: settings.hideSubtitles ? undefined : transcriptError || undefined
   };
 }
 
@@ -171,12 +173,13 @@ const learningPanel = new PageLearningPanel({
   },
   onSeek: (index) => seekTo(index),
   onStudy: (videoId, id) => void studySentenceTranslation(videoId, id),
+  onSubtitleMode: (mode) => { void updateSettings(subtitleDisplayPatch(mode)); },
   onPrefetch: (indexes) => prefetchCaptionIndexes(indexes)
 });
 
 function applySettings(): void {
   syncYouTubeCaptionVisibility();
-  overlay.setEnabled(Boolean(captionSession));
+  overlay.setEnabled(Boolean(captionSession) && !settings.hideSubtitles);
   overlay.setChineseVisible(settings.showChinese);
   overlay.setAppearance(settings.subtitleAppearance);
   overlay.setPosition(settings.subtitlePosition);
@@ -328,7 +331,7 @@ async function getSentenceTranslation(
   userRequested = false
 ): Promise<string> {
   const signal = captionSession?.signal;
-  if (!signal || (!userRequested && positionPending) || captionVideoId !== watchVideoId() || skipSentenceTranslation(sentence)) return "";
+  if (!subtitleTranslationEnabled(settings) || !signal || (!userRequested && positionPending) || captionVideoId !== watchVideoId() || skipSentenceTranslation(sentence)) return "";
   const version = loadVersion;
   const target = settings.targetLanguage;
   const official = officialTranslations.get(sentence.id);
@@ -361,7 +364,7 @@ async function getSentenceTranslation(
 
 async function translateSentence(sentence: CaptionSentence): Promise<void> {
   const signal = captionSession?.signal;
-  if (!signal) return;
+  if (!signal || !subtitleTranslationEnabled(settings)) return;
   if (skipSentenceTranslation(sentence)) {
     overlay.showTranslation(sentence.id, "");
     return;
@@ -388,7 +391,7 @@ async function translateSentence(sentence: CaptionSentence): Promise<void> {
 }
 
 function scheduleTranslationPrefetch(currentIndex: number): void {
-  if (!captionSession || positionPending || isReviewingFinishedVideo()) return;
+  if (!subtitleTranslationEnabled(settings) || !captionSession || positionPending || isReviewingFinishedVideo()) return;
   const provider = settings.provider;
   const previous = prefetchStateByProvider.get(provider);
   const plan = prefetchBatchPlan(currentIndex, sentences.length, previous, { busy: !prefetchQueue.idle });
@@ -398,7 +401,7 @@ function scheduleTranslationPrefetch(currentIndex: number): void {
 }
 
 function prefetchCaptionIndexes(indexes: number[], planned = false): void {
-  if (!captionSession || positionPending || isReviewingFinishedVideo()) return;
+  if (!subtitleTranslationEnabled(settings) || !captionSession || positionPending || isReviewingFinishedVideo()) return;
   const provider = settings.provider;
   const window = prefetchStateByProvider.get(provider);
   for (const index of new Set(indexes)) {
@@ -416,7 +419,7 @@ function prefetchCaptionIndexes(indexes: number[], planned = false): void {
 
 async function studySentenceTranslation(videoId: string, id: string): Promise<void> {
   const signal = captionSession?.signal;
-  if (!signal) return;
+  if (!signal || !subtitleTranslationEnabled(settings)) return;
   if (!videoId || videoId !== captionVideoId || videoId !== watchVideoId()) return;
   const sentence = sentences.find((item) => item.id === id);
   if (!sentence) return;
@@ -498,11 +501,7 @@ function handleShortcut(event: KeyboardEvent): void {
   else if (shortcutsMatch(shortcut, settings.shortcuts.next)) seekRelative(1);
   else if (shortcutsMatch(shortcut, settings.shortcuts.repeat)) seekRelative(0);
   else if (shortcutsMatch(shortcut, settings.shortcuts.toggleTranslation)) {
-    settings.showChinese = !settings.showChinese;
-    overlay.setChineseVisible(settings.showChinese);
-    void updateSettings({ showChinese: settings.showChinese });
-    const current = sentences[activeIndex];
-    if (current && settings.showChinese) void translateSentence(current);
+    void updateSettings({ showChinese: !settings.showChinese, hideSubtitles: false });
   } else if (shortcutsMatch(shortcut, settings.shortcuts.analyze)) void analyzeCurrentSentence();
   else handled = false;
   if (handled) {
@@ -563,7 +562,7 @@ function syncYouTubeCaptionVisibility(): void {
     overlay.hideSentence();
   }
   syncNativeCaptionStyle();
-  overlay.setEnabled(visible);
+  overlay.setEnabled(visible && !settings.hideSubtitles);
   overlay.setCaptionsVisible(visible);
   learningPanel.setVisible((visible || isReviewingFinishedVideo()) && !document.fullscreenElement);
   if (!visible && pausedByHover) {
@@ -696,6 +695,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
       settings.tencentSecretKey !== next.tencentSecretKey ||
       settings.tencentRegion !== next.tencentRegion ||
       settings.tencentConcurrency !== next.tencentConcurrency;
+    const displayChanged = subtitleDisplayMode(settings) !== subtitleDisplayMode(next);
+    if (displayChanged) {
+      const hadSession = Boolean(captionSession);
+      captionSession?.abort();
+      captionSession = hadSession ? new AbortController() : undefined;
+      pendingTranslations.clear();
+      prefetchQueue.clear();
+      prefetchStateByProvider.clear();
+      accountPrefetchRetry = undefined;
+    }
     if (connectionChanged) {
       prefetchQueue.clear();
       prefetchStateByProvider.clear();
@@ -706,7 +715,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (languagesChanged || localModeChanged) { void loadTracks(latestTracks); return; }
     applySettings();
     publishTranscriptSnapshot();
-    if (connectionChanged && activeIndex >= 0) scheduleTranslationPrefetch(activeIndex);
+    if ((connectionChanged || displayChanged) && activeIndex >= 0) scheduleTranslationPrefetch(activeIndex);
   });
 });
 

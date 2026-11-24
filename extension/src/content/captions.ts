@@ -301,7 +301,7 @@ export async function fetchBilingualCaptions(
   const targets = tracks.filter((track) => languageFamily(track.languageCode) === languageFamily(settings.targetLanguage));
   const traditional = /(?:tw|hant|hk)/i.test(settings.targetLanguage);
   const matching = targets.filter((track) => languageFamily(settings.targetLanguage) !== "zh" || /(?:tw|hant|hk)/i.test(track.languageCode) === traditional);
-  const target = shouldSkipTranslation(source.languageCode, settings) ? undefined :
+  const target = settings.hideSubtitles || !settings.showChinese || shouldSkipTranslation(source.languageCode, settings) ? undefined :
     matching.find((track) => track.kind !== "asr") ?? matching[0];
   // When both tracks exist, retain their authored text and timing. Independent
   // sentence regrouping destroys the original correspondence between tracks.

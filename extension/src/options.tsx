@@ -333,13 +333,13 @@ export function App() {
             <label><input type="checkbox" checked={form.showChinese} onChange={(event) => setForm({ ...form, showChinese: event.target.checked })} />{t("默认显示翻译")}</label>
             <label><input type="checkbox" checked={form.hoverPause} onChange={(event) => setForm({ ...form, hoverPause: event.target.checked })} />{t("悬停字幕时暂停")}</label>
             <label><input type="checkbox" checked={form.resumeAfterHover} onChange={(event) => setForm({ ...form, resumeAfterHover: event.target.checked })} />{t("离开后恢复播放")}</label>
-            <div className="field">
+            <div className="field full">
               <label htmlFor="auto-return-subtitles">{t("自动返回字幕（秒）")}</label>
               <input id="auto-return-subtitles" type="number" min="0" max={MAX_AUTO_RETURN_SECONDS} step="1" required
                 aria-describedby="auto-return-subtitles-hint"
                 value={Number.isNaN(form.autoReturnToSubtitlesSeconds) ? "" : form.autoReturnToSubtitlesSeconds}
                 onChange={(event) => setForm({ ...form, autoReturnToSubtitlesSeconds: event.target.valueAsNumber })} />
-              <span className="hint" id="auto-return-subtitles-hint">{t("仅在视频正常播放时计时。默认 10 秒，填 0 关闭。")}</span>
+              <span className="hint" id="auto-return-subtitles-hint">{t("播放时自动返回字幕面板（默认20秒，填0关闭）。")}</span>
             </div>
           </div>
         </section>

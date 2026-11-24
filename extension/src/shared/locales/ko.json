@@ -62,7 +62,6 @@
   "悬停字幕时暂停": "자막 위에 마우스를 올리면 일시정지",
   "离开后恢复播放": "마우스를 벗어나면 재생 계속",
   "自动返回字幕（秒）": "자막으로 자동 복귀(초)",
-  "仅在视频正常播放时计时。默认 10 秒，填 0 关闭。": "정상 재생 중에만 시간을 셉니다. 기본 10초, 0으로 설정하면 꺼집니다.",
   "原文字号：": "원문 글자 크기:",
   "译文字号：": "번역 글자 크기:",
   "原文颜色": "원문 색상",
@@ -319,5 +318,12 @@
   "此词典不支持所选词条语言": "This dictionary does not support the selected word language",
   "词条过长，请选择单词或短语": "The entry is too long. Select a word or short phrase",
   "词典暂不可用，请稍后重试": "The dictionary is unavailable. Please try again later",
-  "词典响应过大": "The dictionary response is too large"
+  "词典响应过大": "The dictionary response is too large",
+  "不显示字幕": "Hide subtitles",
+  "显示双语字幕": "Show bilingual subtitles",
+  "仅显示源语字幕": "Show source subtitles only",
+  "当前：{0}；点击切换为：{1}": "Current: {0}; click to switch to: {1}",
+  "关闭自动跟随": "Turn off auto-follow",
+  "开启自动跟随": "Turn on auto-follow",
+  "播放时自动返回字幕面板（默认20秒，填0关闭）。": "재생 중 자막 패널로 자동 복귀합니다(기본 20초, 0으로 설정하면 끔)."
 }

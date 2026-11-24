@@ -28,6 +28,7 @@ export interface ExtensionSettings {
   analysisServiceMode: import("./service-mode").ServiceMode;
   enabled: boolean;
   showChinese: boolean;
+  hideSubtitles: boolean;
   targetLanguage: string;
   excludedLanguages: string[];
   hoverPause: boolean;
@@ -95,6 +96,7 @@ export interface TranscriptPanelSentence extends CaptionSentence {
 }
 
 export interface TranscriptPanelSnapshot {
+  displayMode?: import("./subtitle-display").SubtitleDisplayMode;
   sourceLanguage?: string;
   videoId: string;
   videoTitle: string;
@@ -120,6 +122,7 @@ export type TranscriptPanelHostMessage =
 
 export type TranscriptPanelFrameMessage =
   | { source: "tubitle-panel"; type: "PANEL_READY" }
+  | { source: "tubitle-panel"; type: "SET_SUBTITLE_MODE"; mode: import("./subtitle-display").SubtitleDisplayMode }
   | { source: "tubitle-panel"; type: "SEEK_HISTORY"; videoId: string; startMs: number }
   | { source: "tubitle-panel"; type: "SEEK_TO_CAPTION"; index: number }
   | { source: "tubitle-panel"; type: "STUDY_CAPTION"; videoId: string; sentenceId: string }

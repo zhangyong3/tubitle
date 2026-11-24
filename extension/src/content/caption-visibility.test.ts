@@ -5,6 +5,7 @@ const fixture = vi.hoisted(() => ({
   storageListeners: [] as Array<(changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void>,
   showTranslationError: vi.fn(),
   setPanelVisible: vi.fn(),
+  setOverlayEnabled: vi.fn(),
   setPlaybackActive: vi.fn(),
   setSnapshot: vi.fn(),
   setActive: vi.fn(),
@@ -23,7 +24,7 @@ const fixture = vi.hoisted(() => ({
 vi.mock("./overlay", () => ({
   SubtitleOverlay: class {
     setCaptionsVisible = fixture.setCaptionsVisible;
-    setEnabled() {}
+    setEnabled = fixture.setOverlayEnabled;
     setChineseVisible() {}
     setAppearance() {}
     setPosition() {}
@@ -67,6 +68,7 @@ async function openFixture(url = "https://www.youtube.com/watch?v=test") {
   fixture.storageListeners.length = 0;
   fixture.fetchCaptions.mockImplementation(async () => captions());
   let pressed = "false";
+  let storedSettings = { ...DEFAULT_SETTINGS };
   const video = {
     currentTime: 0.5, duration: 2, paused: true, ended: false, seeking: false,
     playbackRate: 1, readyState: 4, HAVE_FUTURE_DATA: 3,
@@ -92,7 +94,7 @@ async function openFixture(url = "https://www.youtube.com/watch?v=test") {
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { nextFrame = callback; });
   vi.stubGlobal("MutationObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn(async () => ({ ok: true })) }, storage: {
-    local: { get: async () => ({ settings: DEFAULT_SETTINGS }) },
+    local: { get: async () => ({ settings: storedSettings }) },
     onChanged: { addListener: (listener: (changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void) => { fixture.storageListeners.push(listener); } }
   } });
   await import("./index");
@@ -111,7 +113,15 @@ async function openFixture(url = "https://www.youtube.com/watch?v=test") {
     Object.defineProperty(event, "target", { value: video });
     document.dispatchEvent(event);
   };
-  return { tick, location, document, video, button, publishTracks, endPlayback, setPressed: (value: string) => { pressed = value; } };
+  const setDisplay = async (patch: Partial<typeof DEFAULT_SETTINGS>) => {
+    const oldValue = storedSettings;
+    storedSettings = { ...storedSettings, ...patch };
+    for (const listener of fixture.storageListeners) listener({ settings: { oldValue, newValue: storedSettings } }, "local");
+    await vi.waitFor(() => expect(fixture.setSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({
+      displayMode: storedSettings.hideSubtitles ? "hidden" : storedSettings.showChinese ? "bilingual" : "source"
+    })));
+  };
+  return { tick, location, document, video, button, publishTracks, endPlayback, setDisplay, setPressed: (value: string) => { pressed = value; } };
 }
 
 it("waits for a timestamp link to settle before following or translating captions", async () => {
@@ -384,4 +394,33 @@ it("ignores late anonymous quota errors after login has restored translations", 
   await new Promise(resolve => setTimeout(resolve, 0));
   await vi.waitFor(() => expect(fixture.setTranslation).toHaveBeenCalledWith("two", "新账号译文"));
   expect(fixture.setTranslation.mock.calls.some(([, , error]) => error === message)).toBe(false);
+});
+
+
+it("clears the hidden transcript and stops current, prefetch and visible translation requests", async () => {
+  const { tick, setPressed, setDisplay } = await openFixture();
+  setPressed("true"); tick();
+  expect(fixture.sendTranslation).toHaveBeenCalled();
+  const signals = fixture.sendTranslation.mock.calls.map(call => call[1] as AbortSignal);
+  await setDisplay({ hideSubtitles: true, showChinese: false });
+  expect(signals.every(signal => signal.aborted)).toBe(true);
+  expect(fixture.setOverlayEnabled).toHaveBeenLastCalledWith(false);
+  fixture.sendTranslation.mockClear();
+  tick(); fixture.prefetchVisible?.([0, 1]);
+  expect(fixture.sendTranslation).not.toHaveBeenCalled();
+  expect(fixture.setSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({ displayMode: "hidden", sentences: [] }));
+  // Keep the toolbar panel available so the user can turn captions back on.
+  expect(fixture.setPanelVisible).toHaveBeenLastCalledWith(true);
+});
+
+it("shows only source text without translations, then resumes when bilingual is restored", async () => {
+  const { tick, setPressed, setDisplay } = await openFixture();
+  await setDisplay({ hideSubtitles: false, showChinese: false });
+  setPressed("true"); tick(); fixture.prefetchVisible?.([0, 1]);
+  expect(fixture.sendTranslation).not.toHaveBeenCalled();
+  expect(fixture.setSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({ displayMode: "source", sentences: expect.arrayContaining([
+    expect.objectContaining({ id: "one", text: fixture.sentences[0]!.text, translationSkipped: true, translation: undefined })
+  ]) }));
+  await setDisplay({ hideSubtitles: false, showChinese: true });
+  expect(fixture.sendTranslation).toHaveBeenCalled();
 });

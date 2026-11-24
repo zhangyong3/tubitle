@@ -1,6 +1,7 @@
+import { SubtitleToolbar } from "./subtitle-toolbar";
 import { OnlineDictionaries } from "./online-dictionaries";
-import { dictionaryLanguage, normalizeOnlineDictionaries, type OnlineDictionary } from "./shared/online-dictionaries";
-import { LANGUAGES } from "./shared/languages";
+import { normalizeOnlineDictionaries, type OnlineDictionary } from "./shared/online-dictionaries";
+import { languageFamily } from "./shared/languages";
 import { HistoryDeleteButton } from "./history-delete-button";
 import { t, initializeI18n, getUiLanguage } from "./shared/i18n";
 import { useI18n } from "./shared/use-i18n";
@@ -32,7 +33,7 @@ import {
   streamSentenceAnalysis,
   type AnalysisQuery
 } from "./shared/analysis-stream";
-import { getSettings, normalizeAutoReturnSeconds } from "./shared/settings";
+import { DEFAULT_SETTINGS, getSettings, normalizeAutoReturnSeconds } from "./shared/settings";
 import {
   clearSidebarHistory,
   deleteSidebarHistory,
@@ -228,7 +229,7 @@ function App() {
   const [result, setResult] = useState<LookupResult>();
   const [lookup, setLookup] = useState<{ word: string }>();
   const [onlineProviders, setOnlineProviders] = useState<OnlineDictionary[]>(["wordnet"]);
-  const [lookupLanguage, setLookupLanguage] = useState("auto");
+  const [lookupLanguage, setLookupLanguage] = useState(languageFamily(DEFAULT_SETTINGS.targetLanguage));
   const [offlineConfigured, setOfflineConfigured] = useState(false);
   const [offlineRevision, setOfflineRevision] = useState(0);
   const wordNetController = useRef<AbortController | undefined>(undefined);
@@ -408,6 +409,7 @@ function App() {
     ]).then(([stored, settings]) => {
       setOfflineConfigured(settings.offlineDictionary.configured);
       setOnlineProviders(settings.onlineDictionaries);
+      setLookupLanguage(languageFamily(settings.targetLanguage));
       setAutoReturnSeconds(settings.autoReturnToSubtitlesSeconds);
       historyRetentionDaysRef.current = settings.historyRetentionDays;
       setHistoryRetentionDays(settings.historyRetentionDays);
@@ -434,6 +436,7 @@ function App() {
         setAutoReturnSeconds(normalizeAutoReturnSeconds(next?.autoReturnToSubtitlesSeconds));
         setOfflineConfigured(Boolean(next?.offlineDictionary?.configured));
         setOnlineProviders(normalizeOnlineDictionaries(next?.onlineDictionaries));
+        setLookupLanguage(languageFamily(next?.targetLanguage ?? DEFAULT_SETTINGS.targetLanguage));
         const nextHistoryRetentionDays = next?.historyRetentionDays ?? DEFAULT_HISTORY_RETENTION_DAYS;
         historyRetentionDaysRef.current = nextHistoryRetentionDays;
         setHistoryRetentionDays(nextHistoryRetentionDays);
@@ -617,15 +620,9 @@ function App() {
           <>
             <div className="dictionary-heading">
               <h1 className="word">{lookup.word}</h1>
-              {dictionaryLanguage(lookup.word, lookupLanguage === "auto" ? transcript?.sourceLanguage : lookupLanguage) === "en" && <a className="dictionary-link" href={`https://www.ldoceonline.com/search/?${new URLSearchParams({ q: lookup.word })}`}
+              {lookupLanguage === "en" && <a className="dictionary-link" href={`https://www.ldoceonline.com/search/?${new URLSearchParams({ q: lookup.word })}`}
                 target="_blank" rel="noopener noreferrer">{t("在朗文查看")}<span aria-hidden="true">↗</span></a>}
             </div>
-            <label className="dictionary-language">{t("词条语言")}
-              <select aria-label={t("词条语言")} value={lookupLanguage} onChange={event=>setLookupLanguage(event.target.value)}>
-                <option value="auto">{t("自动（跟随字幕语言）")}</option>
-                {LANGUAGES.filter(([code])=>code!=="zh-TW").map(([code,label])=><option key={code} value={code}>{t(label)}</option>)}
-              </select>
-            </label>
             {offlineConfigured && (
               <section className="dictionary-source" aria-labelledby="offline-heading">
                 <h2 id="offline-heading">{t("离线词典")}</h2>
@@ -642,7 +639,7 @@ function App() {
                   ) : <div className="status empty">{t("离线词典中没有找到完全匹配的词条。")}</div>}
               </section>
             )}
-            <OnlineDictionaries word={lookup.word} language={lookupLanguage === "auto" ? dictionaryLanguage(lookup.word, transcript?.sourceLanguage) : lookupLanguage} providers={onlineProviders} historyDays={historyRetentionDays} />
+            <OnlineDictionaries word={lookup.word} language={lookupLanguage} providers={onlineProviders} historyDays={historyRetentionDays} />
             {offlineConfigured && !!result?.suggestions.length && (
               <div className="suggestions"><div className="brand">{t("相关词条")}</div>{result.suggestions.map((word) => (
                 <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
@@ -731,7 +728,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
   }
 
   function requestVisibleTranslations() {
-    if (!visible || snapshot?.positionPending) return;
+    if (!visible || (snapshot?.displayMode ?? "bilingual") !== "bilingual" || snapshot?.positionPending) return;
     const list = listRef.current;
     if (!list || !snapshot?.sentences.length) return;
     const bounds = list.getBoundingClientRect();
@@ -762,7 +759,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
         scrollFrame.current = undefined;
       }
     };
-  }, [snapshot?.videoId, snapshot?.sentences.length, snapshot?.positionPending, activeIndex, autoFollow, visible]);
+  }, [snapshot?.videoId, snapshot?.sentences.length, snapshot?.positionPending, activeIndex, autoFollow, visible, snapshot?.displayMode]);
 
   useEffect(() => () => {
     if (scrollFrame.current !== undefined) window.cancelAnimationFrame(scrollFrame.current);
@@ -784,15 +781,13 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
         <div className="transcript-heading-copy">
           <h1 title={snapshot?.videoTitle || t("双语字幕")}>{snapshot?.videoTitle || t("双语字幕")}</h1>
         </div>
-        <div className="transcript-actions">
-          {snapshot && !snapshot.loading && !snapshot.error && snapshot.sentences.length > 0 && (
-            <button type="button" className="collapse-panel export-pdf" disabled={exporting} onClick={() => void exportPdf()}>
-              {exporting ? t("生成中…") : t("下载 PDF")}
-            </button>
-          )}
-          <label><input type="checkbox" checked={autoFollow} onChange={(event) => onAutoFollowChange(event.target.checked)} />{t("自动跟随")}</label>
-
-        </div>
+        <SubtitleToolbar
+          mode={snapshot?.displayMode ?? "bilingual"}
+          onModeChange={mode => postToHost({ source: "tubitle-panel", type: "SET_SUBTITLE_MODE", mode })}
+          autoFollow={autoFollow} onAutoFollowChange={onAutoFollowChange}
+          canExport={Boolean(snapshot && !snapshot.loading && !snapshot.error && snapshot.sentences.length)}
+          exporting={exporting} onExport={() => void exportPdf()}
+        />
       </header>
       <div className="transcript-progress" aria-label={t("视频播放进度")}>
         <time>{formatCaptionTime(snapshot?.currentTimeMs ?? 0)}</time>
@@ -804,7 +799,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
           {t(exportError || studyFeedback?.text || "")}
         </div>
       )}
-      {snapshot?.loading ? (
+      {snapshot?.displayMode === "hidden" ? null : snapshot?.loading ? (
         <div className="transcript-state">{t("正在读取当前视频字幕…")}</div>
       ) : snapshot?.error ? (
         <div className="transcript-state error">{t(snapshot.error)}</div>

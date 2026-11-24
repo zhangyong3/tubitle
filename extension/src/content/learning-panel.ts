@@ -11,6 +11,7 @@ interface LearningPanelHandlers {
   onSeek: (index: number) => void;
   onStudy: (videoId: string, sentenceId: string) => void;
   onPrefetch: (indexes: number[]) => void;
+  onSubtitleMode?: (mode: import("../shared/subtitle-display").SubtitleDisplayMode) => void;
 }
 
 const PANEL_MIN_WIDTH = 320;
@@ -166,6 +167,8 @@ export class PageLearningPanel {
         this.post({ source: "tubitle-host", type: "LOOKUP_WORD", word: this.pendingWord });
         this.pendingWord = undefined;
       }
+    } else if (message.type === "SET_SUBTITLE_MODE" && ["hidden", "bilingual", "source"].includes(message.mode)) {
+      this.handlers.onSubtitleMode?.(message.mode);
     } else if (message.type === "SEEK_HISTORY") {
       this.handlers.onHistorySeek(message.videoId, message.startMs);
     } else if (message.type === "SEEK_TO_CAPTION" && Number.isInteger(message.index)) {

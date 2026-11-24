@@ -9,7 +9,7 @@ The lookup panel displays sources separately. Unsupported languages do not trigg
 - WordNet: English only.
 - Bing: English and Chinese.
 - Youdao: English, Chinese, Japanese, Korean, French. Other languages are not advertised as supported.
-- Automatic mode uses subtitle source language and recognizable scripts. Latin spelling without source-language metadata remains unknown rather than being assumed English. A manual word-language selector is available.
+- Lookup language follows the target language in extension settings, including live settings changes. The panel has no separate language selector. Regional variants such as zh-TW are normalized to their language family for dictionary routing.
 - Japanese/Chinese/Thai overlay text uses Intl.Segmenter. Case and combining marks are preserved for online queries.
 - Dictionaries retain their own definition languages (often Chinese for Bing/Youdao); this feature does not translate dictionary definitions into the subtitle target language.
 
@@ -38,7 +38,7 @@ The probe logs result counts and saves Bing HTML only under `/private/tmp`. Do n
 
 ## Installed extension follow-up
 
-Reload the unpacked extension from `extension/dist`, refresh YouTube, enable the desired dictionaries in settings, accept their host permission requests and double-click a subtitle word. Verify automatic subtitle language and the manual language selector for the intended video. Direct extension-page automation was unavailable; the UI validation above is an isolated HTTP preview, not a claim of installed-extension end-to-end verification.
+Reload the unpacked extension from `extension/dist`, refresh YouTube, enable the desired dictionaries in settings, accept their host permission requests and double-click a subtitle word. Verify that changing the target language in settings updates dictionary routing. Direct extension-page automation was unavailable; the UI validation above is an isolated HTTP preview, not a claim of installed-extension end-to-end verification.
 
 ## Youdao Chrome Origin regression (2026-11-24)
 
