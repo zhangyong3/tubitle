@@ -1,3 +1,5 @@
+import { translateKeyless } from "./keyless-providers";
+import { isKeylessProvider } from "./shared/service-mode";
 import { decodeTextEntities } from "./shared/text-entities";
 import { providerLanguage } from "./shared/languages";
 import type { ExtensionSettings, TranslationProvider } from "./shared/types";
@@ -198,6 +200,7 @@ async function tencent(text: string, settings: ExtensionSettings, source = "", s
 }
 
 export function translateLocally(provider: TranslationProvider, text: string, settings: ExtensionSettings, source = "", signal?: AbortSignal, expectedModel?: string): Promise<string> {
+  if (isKeylessProvider(provider)) return translateKeyless(provider, text, source, settings.targetLanguage, signal);
   if (provider === "microsoft") return microsoft(text, settings, source, signal);
   if (provider === "google") return google(text, settings, source, signal);
   if (provider === "hy-mt-local") return tubitle(text, settings, source, signal, expectedModel);

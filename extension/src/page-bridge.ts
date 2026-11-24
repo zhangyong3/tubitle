@@ -1,3 +1,4 @@
+import { translateInChrome } from "./shared/chrome-translator";
 import { captionTracksForVideo, selectSourceTrack, type YouTubePlayerResponse } from "./shared/caption-tracks";
 import { languageFamily, sourceLanguage } from "./shared/languages";
 import {
@@ -299,3 +300,24 @@ document.addEventListener("tubitle:request-transcript", (event) => {
   );
 });
 window.setInterval(publishTracks, 1500);
+
+// Only subtitle text and language codes cross the page bridge; never API keys.
+const chromeTranslations = new Map<string, AbortController>();
+document.addEventListener('tubitle:chrome-translate', (event) => {
+  const value = (event as CustomEvent).detail;
+  if (!value || typeof value.requestId !== 'string' || value.requestId.length > 100 ||
+      typeof value.text !== 'string' || !value.text.trim() || value.text.length > 1200 ||
+      typeof value.source !== 'string' || typeof value.target !== 'string' ||
+      !/^[a-zA-Z-]{2,20}$/.test(value.source) || !/^[a-zA-Z-]{2,20}$/.test(value.target) ||
+      chromeTranslations.size >= 8 || chromeTranslations.has(value.requestId)) return;
+  const controller = new AbortController();
+  chromeTranslations.set(value.requestId, controller);
+  void translateInChrome(value.text, value.source, value.target, controller.signal).then(
+    text => document.dispatchEvent(new CustomEvent('tubitle:chrome-translation', {detail:{requestId:value.requestId,text}})),
+    error => document.dispatchEvent(new CustomEvent('tubitle:chrome-translation', {detail:{requestId:value.requestId,error:error instanceof Error ? error.message : 'Chrome 本地翻译失败'}}))
+  ).finally(() => chromeTranslations.delete(value.requestId));
+});
+document.addEventListener('tubitle:chrome-cancel', (event) => {
+  const id = (event as CustomEvent).detail?.requestId;
+  chromeTranslations.get(id)?.abort(); chromeTranslations.delete(id);
+});

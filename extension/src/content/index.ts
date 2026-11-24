@@ -1,3 +1,4 @@
+import { requestChromeTranslation } from "../shared/chrome-translator";
 import { SYNC_STATE_KEY } from "../shared/learning-sync";
 import { PlaybackActivity } from "../shared/learning-activity";
 import { PrefetchQueue } from "./prefetch-queue";
@@ -337,13 +338,13 @@ async function getSentenceTranslation(
   const pending = pendingTranslations.get(key);
   if (pending) return pending;
 
-  const request = requestSubtitleTranslation({
+  const request = (provider === "chrome-local" ? requestChromeTranslation(sentence.text, sourceLanguage(sentence.text, captionLanguage), target, signal) : requestSubtitleTranslation({
     type: "TRANSLATE",
     text: sentence.text,
     sourceLanguage: sourceLanguage(sentence.text, captionLanguage),
     provider,
     priority: userRequested || sentence.id === sentences[activeIndex]?.id ? "current" : "prefetch"
-  }, signal).then((translation) => {
+  }, signal)).then((translation) => {
     if (signal.aborted || !isCurrentCaptionLoad(version) || target !== settings.targetLanguage) return "";
     translation = decodeTextEntities(translation);
     translations.set(key, translation);

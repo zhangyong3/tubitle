@@ -1,4 +1,4 @@
-export type TranslationProvider = "microsoft" | "google" | "tencent" | "hy-mt-local";
+export type TranslationProvider = "microsoft" | "google" | "tencent" | "hy-mt-local" | "edge-free" | "google-free" | "volcengine-free" | "tencent-free" | "baidu-free" | "deepl-free" | "chrome-local";
 
 export interface ShortcutSettings {
   previous: string;
@@ -24,6 +24,7 @@ export interface ExtensionSettings {
   settingsVersion: number;
   uiLanguage: import("./ui-language").UiLanguage;
   serviceMode: import("./service-mode").ServiceMode;
+  analysisServiceMode: import("./service-mode").ServiceMode;
   enabled: boolean;
   showChinese: boolean;
   targetLanguage: string;

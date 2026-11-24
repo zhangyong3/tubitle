@@ -1,3 +1,4 @@
+import { KEYLESS_PROVIDERS } from "./shared/service-mode";
 import { t, initializeI18n } from "./shared/i18n";
 import { useI18n } from "./shared/use-i18n";
 import { useEffect, useState } from "react";
@@ -43,6 +44,7 @@ function App() {
       {settings.serviceMode === "custom" && <div className="row">
         <label htmlFor="provider">{t("翻译引擎")}</label>
         <select id="provider" value={settings.provider} onChange={(event) => void patch({ provider: event.target.value as TranslationProvider })}>
+          {KEYLESS_PROVIDERS.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           <option value="microsoft">Microsoft</option>
           <option value="google">Google Cloud</option>
         </select>

@@ -7,9 +7,10 @@ import type { ExtensionSettings } from "./types";
 export const MAX_AUTO_RETURN_SECONDS = 3600;
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  settingsVersion: 10,
+  settingsVersion: 11,
   uiLanguage: resolveUiLanguage(typeof navigator === "undefined" ? "en" : navigator.language),
   serviceMode: "tubitle",
+  analysisServiceMode: "tubitle",
   enabled: true,
   showChinese: true,
   targetLanguage: "zh",
@@ -85,6 +86,7 @@ export async function getSettings(): Promise<ExtensionSettings> {
     tubitleApiKey: "",
     uiLanguage: resolveUiLanguage(saved?.uiLanguage || DEFAULT_SETTINGS.uiLanguage),
     serviceMode: serviceMode(saved?.serviceMode),
+    analysisServiceMode: serviceMode(saved?.analysisServiceMode ?? saved?.serviceMode),
     provider: translationProvider(saved?.serviceMode, saved?.provider || DEFAULT_SETTINGS.provider),
     historyRetentionDays: normalizeHistoryDays(saved?.historyRetentionDays),
     autoReturnToSubtitlesSeconds: normalizeAutoReturnSeconds(saved?.autoReturnToSubtitlesSeconds),
@@ -115,6 +117,7 @@ export async function updateSettings(
     tubitleApiKey: "",
     uiLanguage: resolveUiLanguage(patch.uiLanguage ?? current.uiLanguage),
     serviceMode: serviceMode(patch.serviceMode ?? current.serviceMode),
+    analysisServiceMode: serviceMode(patch.analysisServiceMode ?? current.analysisServiceMode),
     provider: translationProvider(patch.serviceMode ?? current.serviceMode, patch.provider ?? current.provider),
     historyRetentionDays: normalizeHistoryDays(patch.historyRetentionDays ?? current.historyRetentionDays),
     autoReturnToSubtitlesSeconds: normalizeAutoReturnSeconds(patch.autoReturnToSubtitlesSeconds ?? current.autoReturnToSubtitlesSeconds),

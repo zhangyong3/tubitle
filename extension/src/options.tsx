@@ -1,3 +1,5 @@
+import { keylessRequest } from "./keyless-providers";
+import { translateInChrome } from "./shared/chrome-translator";
 import { t, initializeI18n, UI_LANGUAGES, setUiLanguage, getUiLanguage } from "./shared/i18n";
 import { useI18n } from "./shared/use-i18n";
 import { createSettingsAutosave } from "./shared/settings-autosave";
@@ -17,7 +19,7 @@ import {
 import type { ExtensionSettings, ShortcutSettings, TranslationProvider } from "./shared/types";
 import { selectDictionaryDirectoryFiles } from "./shared/dictionary-directory";
 import { sendMessage } from "./shared/messaging";
-import { translationProvider } from "./shared/service-mode";
+import { KEYLESS_PROVIDERS, isKeylessProvider, translationProvider } from "./shared/service-mode";
 
 const categories = [
   { id: "general", label: "常规", icon: "settings", description: "管理学习记录与使用偏好。" },
@@ -80,11 +82,11 @@ export function App() {
     });
   }, []);
 
-  async function requestApiPermissions(settings: ExtensionSettings): Promise<boolean> {
-    if (settings.serviceMode !== "custom") return true;
+  async function requestApiPermissions(settings: ExtensionSettings, forProvider?: TranslationProvider | "llm"): Promise<boolean> {
     const origins = [
-      settings.provider === "microsoft" && settings.microsoftTranslatorKey.trim() && settings.microsoftTranslatorEndpoint,
-      settings.llmApiKey.trim() && settings.llmBaseUrl
+      (forProvider === undefined || forProvider === "microsoft") && settings.serviceMode === "custom" && settings.provider === "microsoft" && settings.microsoftTranslatorKey.trim() && settings.microsoftTranslatorEndpoint,
+      (forProvider === undefined || forProvider === settings.provider) && settings.serviceMode === "custom" && isKeylessProvider(settings.provider) && settings.provider !== "chrome-local" && keylessRequest(settings.provider, "Test", "en", "zh").url,
+      (forProvider === undefined || forProvider === "llm") && settings.analysisServiceMode === "custom" && settings.llmApiKey.trim() && settings.llmBaseUrl
     ].filter((value): value is string => typeof value === "string" && !!value).map((value) => {
       const url = new URL(value);
       return `${url.protocol}//${url.host}/*`;
@@ -138,10 +140,11 @@ export function App() {
   async function testProvider(provider: TranslationProvider | "llm") {
     setProviderMessage("正在测试连接…");
     try {
-      if (!await requestApiPermissions(form)) throw new Error("需要先允许访问所配置的 API 域名");
+      if (!await requestApiPermissions(form, provider)) throw new Error("需要先允许访问所配置的 API 域名");
       await autosave.current.settled();
       await autosave.current.save({});
-      await sendMessage({ type: "TEST_PROVIDER", provider });
+      if (provider === "chrome-local") await translateInChrome("This is a connection test.", "en", form.targetLanguage, undefined, loaded => setProviderMessage(t("语言包下载进度：{0}%", Math.round(loaded * 100))));
+      else await sendMessage({ type: "TEST_PROVIDER", provider });
       setProviderMessage("连接成功 ✓");
     } catch (error) {
       setProviderMessage(error instanceof Error ? error.message : "连接失败");
@@ -228,19 +231,19 @@ export function App() {
         <section className="card">
           <h2>{t("服务方式")}</h2>
           <div className="field">
-            <label htmlFor="service-mode">{t("字幕翻译与 AI 语句分析")}</label>
+            <label htmlFor="service-mode">{t("字幕翻译")}</label>
             <select id="service-mode" value={form.serviceMode} onChange={(event) => {
               const mode = event.target.value === "custom" ? "custom" : "tubitle";
               setForm({ ...form, serviceMode: mode, provider: translationProvider(mode, form.provider) });
               setProviderMessage("");
             }}>
               <option value="tubitle">{t("使用 Tubitle 服务（默认）")}</option>
-              <option value="custom">{t("使用自己的 API Key")}</option>
+              <option value="custom">{t("选择翻译引擎（免 Key / 自备 API）")}</option>
             </select>
           </div>
           <p className="hint">{form.serviceMode === "tubitle"
-            ? t("由 Tubitle 提供字幕翻译与 AI 语句分析，均需登录。AI 解析免费版每天 3 次，Pro 每天 100 次。")
-            : t("字幕与句子直接发送到你选择的服务商，费用由服务商收取，不消耗 Tubitle 额度。登录后学习记录仍会自动同步。")}</p>
+            ? t("由 Tubitle 提供字幕翻译，受账号套餐额度限制。")
+            : t("字幕直接交给所选翻译引擎，不消耗 Tubitle 翻译额度。")}</p>
         </section>
         {form.serviceMode === "custom" && <>
         <section className="card">
@@ -248,11 +251,16 @@ export function App() {
           <div className="field">
             <label htmlFor="provider">{t("翻译服务商")}</label>
             <select id="provider" value={form.provider} onChange={(event) => { setForm({ ...form, provider: event.target.value as TranslationProvider }); setProviderMessage(""); }}>
-              <option value="microsoft">Microsoft Translator</option>
-              <option value="google">Google Cloud Translation</option>
+              <optgroup label={t("免 Key 翻译")} >{KEYLESS_PROVIDERS.map(([id, name]) => <option value={id} key={id}>{name}{["baidu-free", "deepl-free"].includes(id) ? ` (${t("实验入口")})` : ""}</option>)}</optgroup>
+              <optgroup label={t("自备 API Key")}><option value="microsoft">Microsoft Translator</option>
+              <option value="google">Google Cloud Translation</option></optgroup>
             </select>
           </div>
-          {form.provider === "microsoft" ? <>
+          {isKeylessProvider(form.provider) ? <>
+          <p className="hint">{form.provider === "chrome-local" ? t("翻译在本机运行。需桌面 Chrome 138 或更新版本；首次使用需要点击测试并下载语言包，视频页面也可能需要点击播放以完成初始化。") : t("无需填写 Key，字幕会发送到所选服务。服务可能限流或变更；不可用时请切换引擎。点击测试可授予该服务域名的访问权限。")}</p>
+          {["baidu-free", "deepl-free"].includes(form.provider) && <p className="hint">{t("实验入口：当前实测受到服务方限制，测试失败时请使用其他引擎。")}</p>}
+          <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider(form.provider)}>{t("测试翻译引擎")}</button></div>
+          </> : form.provider === "microsoft" ? <>
           <h3>Microsoft Translator</h3>
           <div className="grid">
             <div className="field"><label htmlFor="ms-key">Subscription Key</label><input id="ms-key" type="password" value={form.microsoftTranslatorKey} onChange={(event) => setForm({ ...form, microsoftTranslatorKey: event.target.value })} autoComplete="off" /></div>
@@ -266,8 +274,16 @@ export function App() {
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("google")}>{t("测试 Google")}</button></div>
           </>}
         </section>
+        </>}
         <section className="card">
           <h2>{t("AI 语句分析 API")}</h2>
+          <div className="field"><label htmlFor="analysis-service-mode">{t("AI 语句分析服务")}</label>
+          <select id="analysis-service-mode" value={form.analysisServiceMode} onChange={event => setForm({ ...form, analysisServiceMode: event.target.value === "custom" ? "custom" : "tubitle" })}>
+            <option value="tubitle">{t("Tubitle 服务（有配额限制）")}</option>
+            <option value="custom">{t("自己的大模型 API（不受 Tubitle 配额限制）")}</option>
+          </select></div>
+          {form.analysisServiceMode === "tubitle" ? <p className="hint">{t("AI 解析需登录，免费版每天 3 次，Pro 每天 100 次。")}</p> : <>
+          <p className="hint">{t("不消耗 Tubitle 额度，费用与使用限额由你的 API 提供方决定。")}</p>
           <p className="hint">{t("填写 OpenAI 兼容接口的地址、API Key 和模型名称。无需登录 Tubitle 即可使用自备 API 解析句子。")}</p>
           <div className="grid">
             <div className="field full"><label htmlFor="llm-base">API Base URL</label><input id="llm-base" type="url" value={form.llmBaseUrl} onChange={(event) => setForm({ ...form, llmBaseUrl: event.target.value })} /></div>
@@ -275,9 +291,9 @@ export function App() {
             <div className="field"><label htmlFor="llm-model">Model</label><input id="llm-model" value={form.llmModel} onChange={(event) => setForm({ ...form, llmModel: event.target.value })} /></div>
           </div>
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("llm")}>{t("测试大模型")}</button></div>
-        </section>
         </>}
-        {form.serviceMode === "custom" && <div className="permission-note"><p className="hint">{t("设置会自动保存。首次使用自定义 API 域名时，需要允许浏览器访问该域名。")}</p><button className="secondary" type="button" onClick={() => void requestApiPermissions(form).then((allowed) => setProviderMessage(allowed ? "已允许访问 API 域名" : "未获得 API 域名访问权限")).catch((error: Error) => setProviderMessage(error.message))}>{t("允许访问 API 域名")}</button></div>}
+        </section>
+        {(form.serviceMode === "custom" || form.analysisServiceMode === "custom") && <div className="permission-note"><p className="hint">{t("设置会自动保存。首次使用自定义 API 域名时，需要允许浏览器访问该域名。")}</p><button className="secondary" type="button" onClick={() => void requestApiPermissions(form).then((allowed) => setProviderMessage(allowed ? "已允许访问 API 域名" : "未获得 API 域名访问权限")).catch((error: Error) => setProviderMessage(error.message))}>{t("允许访问 API 域名")}</button></div>}
         {providerMessage && <p className="hint" role="status">{t(providerMessage)}</p>}
         </div>
         <div hidden={activeCategory !== "subtitles"}>

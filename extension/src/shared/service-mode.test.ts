@@ -21,3 +21,11 @@ it('switches both services together and preserves personal configuration for lat
   expect(await updateSettings({ serviceMode: 'tubitle' })).toMatchObject({ provider: 'hy-mt-local', googleTranslateApiKey: 'my-key', llmModel: 'my-model' });
   expect(await updateSettings({ serviceMode: 'custom' })).toMatchObject({ provider: 'microsoft', googleTranslateApiKey: 'my-key' });
 });
+
+it('migrates a previously combined custom mode and then keeps both choices independent', async () => {
+  storage({ settings: { settingsVersion: 10, serviceMode: 'custom', provider: 'google' } });
+  expect(await getSettings()).toMatchObject({ analysisServiceMode: 'custom', serviceMode: 'custom' });
+  expect(await updateSettings({ analysisServiceMode: 'tubitle', provider: 'volcengine-free' })).toMatchObject({ analysisServiceMode: 'tubitle', serviceMode: 'custom', provider: 'volcengine-free' });
+  expect(await updateSettings({ serviceMode: 'tubitle' })).toMatchObject({ analysisServiceMode: 'tubitle', provider: 'hy-mt-local' });
+  expect(await updateSettings({ analysisServiceMode: 'custom' })).toMatchObject({ analysisServiceMode: 'custom', serviceMode: 'tubitle' });
+});
