@@ -33,3 +33,13 @@ it('keeps only per-account current-day totals and resets at Beijing midnight', a
   expect(await readDailyLearning('alice')).toEqual({ sentences: 0, durationMs: 0 });
   vi.useRealTimers();
 });
+
+it('requests a final sync on exit even when the latest playback delta was already saved locally', () => {
+  const report = vi.fn();
+  const activity = new PlaybackActivity(report);
+  activity.update({at:0,position:0,videoId:'video',sentenceId:'one',playing:true,rate:1}, now);
+  activity.flush();
+  report.mockClear();
+  activity.flush(true);
+  expect(report).toHaveBeenCalledWith({day:'2026-11-18',sentences:0,durationMs:0}, true);
+});

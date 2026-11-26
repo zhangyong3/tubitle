@@ -4,7 +4,7 @@ import { readLearningBody } from '@/server/learning/api';
 
 import { authorizeExtension } from '@/server/learning/extension-auth';
 import * as learning from '@/modules/learning/service';
-import { learningInput } from '@/lib/learning';
+import { learningInput, learningActivityInput } from '@/lib/learning';
 import { enforceMinIntervalRateLimit } from '@/lib/rate-limit';
 import { respData, respErr, respJson } from '@/lib/resp';
 
@@ -29,9 +29,14 @@ export async function handleExtensionLearning(request: Request) {
         { userId: access.userId, name: access.name, plan: await planFor(access.userId) },
         { headers }
       );
-    const parsed = learningInput.safeParse(
-      await readLearningBody(request, 262144)
-    );
+    const body = await readLearningBody(request, 262144);
+    if (body && typeof body === 'object' && 'type' in body && body.type === 'activity') {
+      const activity = learningActivityInput.safeParse(body);
+      if (!activity.success) return respErr('Invalid learning activity', { status: 400, headers });
+      await learning.saveActivity(access.userId, activity.data);
+      return respData({ userId: access.userId, name: access.name, plan: await planFor(access.userId) }, { headers });
+    }
+    const parsed = learningInput.safeParse(body);
     if (!parsed.success || !parsed.data?.clientRecordId)
       return respErr('Invalid learning record', { status: 400, headers });
     await learning.create(access.userId, parsed.data, true);

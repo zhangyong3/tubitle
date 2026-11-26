@@ -138,8 +138,8 @@ export interface SentenceAnalysis {
 }
 
 export type ExtensionMessage =
-  | { type: "LEARNING_ACTIVITY"; activity: import("./learning-activity").LearningActivity }
-  | { type: "LEARNING_SYNC_STATUS" }
+  | { type: "LEARNING_ACTIVITY"; activity: import("./learning-activity").LearningActivity; synchronize?: boolean }
+  | { type: "LEARNING_SYNC_STATUS"; cached?: boolean }
   | { type: "CHECK_TRANSCRIPT_PDF_ACCESS" }
   | { type: "LEARNING_SYNC_ENQUEUE"; record: import("./learning-sync").SyncRecord }
   | { type: "GET_SETTINGS" }

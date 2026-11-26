@@ -1,6 +1,6 @@
 import { readAnalysisResponse } from "./shared/read-analysis";
 import { requestSentenceAnalysis } from "./analysis-provider";
-import { requireTranscriptPdfAccess, AnalysisAccessError, recordLearningActivity, enqueueLearning, flushLearning, syncStatus, getAccountTranslationSelection, requestAccountTranslation, type AccountTranslationSelection } from "./learning-sync";
+import { requireTranscriptPdfAccess, AnalysisAccessError, recordLearningActivity, syncLearningActivity, enqueueLearning, flushLearning, syncStatus, getAccountTranslationSelection, requestAccountTranslation, type AccountTranslationSelection } from "./learning-sync";
 import { pruneSidebarHistory } from "./shared/sidebar-history";
 import { SYNC_ALARM } from "./shared/learning-sync";
 import { sourceLanguage, shouldSkipTranslation } from "./shared/languages";
@@ -12,6 +12,8 @@ import { getTubitleModel, MicrosoftRateLimitError, requestAnalysis, translateLoc
 import { SmoothRateLimit } from "./shared/smooth-rate-limit";
 import { SUBTITLE_TRANSLATION_PORT, type SubtitleTranslationRequest } from "./shared/subtitle-translation";
 import { tubitleConnection } from "./shared/tubitle-connection";
+
+const learningTabs = new Set<number>();
 
 interface TranslationJob {
   key?: string; text: string; provider: TranslationProvider;
@@ -292,9 +294,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
       }
       switch (message.type) {
-        case "LEARNING_ACTIVITY": await recordLearningActivity(message.activity); sendResponse({ ok: true, data: null }); break;
+        case "LEARNING_ACTIVITY": if (_sender.tab?.id !== undefined) learningTabs.add(_sender.tab.id); await recordLearningActivity(message.activity); if (message.synchronize) await syncLearningActivity(true); sendResponse({ ok: true, data: null }); break;
         case "CHECK_TRANSCRIPT_PDF_ACCESS": await requireTranscriptPdfAccess(); sendResponse({ ok: true, data: null }); break;
-        case "LEARNING_SYNC_STATUS": sendResponse({ ok: true, data: await syncStatus() }); break;
+        case "LEARNING_SYNC_STATUS": sendResponse({ ok: true, data: await syncStatus(message.cached) }); break;
         case "LEARNING_SYNC_ENQUEUE": await enqueueLearning(message.record); sendResponse({ ok: true, data: null }); break;
         case "GET_SETTINGS": sendResponse({ ok: true, data: await getSettings() }); break;
         case "UPDATE_SETTINGS": sendResponse({ ok: true, data: await updateSettings(message.settings) }); break;
@@ -369,18 +371,27 @@ async function streamAnalysis(sentence: string, requestId: string, signal: Abort
 async function cleanHistory() {
   await pruneSidebarHistory((await getSettings()).historyRetentionDays);
 }
-async function scheduleLearningSync() {
+async function scheduleLearningSync(resumeActivity = false) {
   await chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 1 });
+  if (!await chrome.alarms.get?.("learning-activity-sync")) await chrome.alarms.create("learning-activity-sync", { periodInMinutes: 10 });
   await chrome.alarms.create("history-retention", { periodInMinutes: 60 });
   await cleanHistory();
   await flushLearning();
+  if (resumeActivity) await syncLearningActivity();
 }
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === SYNC_ALARM) void flushLearning().catch(() => undefined); });
-chrome.runtime.onStartup.addListener(() => { void scheduleLearningSync().catch(() => undefined); });
-chrome.runtime.onInstalled.addListener(() => { void scheduleLearningSync().catch(() => undefined); });
+chrome.runtime.onStartup.addListener(() => { void scheduleLearningSync(true).catch(() => undefined); });
+chrome.runtime.onInstalled.addListener(() => { void scheduleLearningSync(true).catch(() => undefined); });
 void scheduleLearningSync().catch(() => undefined);
 
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === "history-retention") void cleanHistory().catch(() => undefined); });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.settings && changes.settings.newValue?.historyRetentionDays !== changes.settings.oldValue?.historyRetentionDays) void cleanHistory().catch(() => undefined);
 });
+
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === 'learning-activity-sync') void syncLearningActivity().catch(() => undefined);
+});
+// The background can finish uploading after a YouTube tab has closed. Persisted
+// totals also cover a missed pagehide; duplicate triggers are coalesced.
+chrome.tabs?.onRemoved?.addListener(tabId => { if (learningTabs.delete(tabId)) void syncLearningActivity(true).catch(() => undefined); });

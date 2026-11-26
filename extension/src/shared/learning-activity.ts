@@ -12,7 +12,7 @@ export class PlaybackActivity {
   private previous?: { at: number; position: number; videoId: string; playing: boolean };
   private pending: DailyLearningStats = { sentences: 0, durationMs: 0 };
   private lastFlush = 0;
-  constructor(private report: (activity: LearningActivity) => void) {}
+  constructor(private report: (activity: LearningActivity, synchronize?: boolean) => void) {}
   update(input: { at: number; position: number; videoId: string; sentenceId?: string; playing: boolean; rate: number }, now = Date.now()): void {
     const day = learningDay(now);
     if (day !== this.day) {
@@ -36,9 +36,11 @@ export class PlaybackActivity {
       this.lastFlush = input.at; this.flush();
     }
   }
-  flush(): void {
-    if (this.pending.sentences || this.pending.durationMs) {
-      this.report({ day: this.day, sentences: this.pending.sentences, durationMs: Math.round(this.pending.durationMs) });
+  flush(synchronize = false): void {
+    if (this.pending.sentences || this.pending.durationMs || synchronize) {
+      const activity = { day: this.day || learningDay(), sentences: this.pending.sentences, durationMs: Math.round(this.pending.durationMs) };
+      if (synchronize) this.report(activity, true);
+      else this.report(activity);
       this.pending = { sentences: 0, durationMs: 0 };
     }
   }

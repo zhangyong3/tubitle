@@ -22,7 +22,7 @@ beforeEach(() => {
   });
   vi.stubGlobal('fetch', request);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe('automatic session sync', () => {
   it('keeps anonymous queries local and never backfills them after login', async () => {
     const sync = await import('./learning-sync');
@@ -305,4 +305,73 @@ it('shows library quota messages and retains the unsynced record for a later ret
   await sync.enqueueLearning(record);
   await sync.flushLearning();
   expect(await sync.syncStatus()).toMatchObject({pending: 1, error: '免费版每天可新增 5 条学习库记录，请明日再试或升级 Pro'});
+});
+
+it('keeps playback updates and repeated account-bar polling local until the ten-minute sync', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-26T01:00:00Z'));
+  const sync = await import('./learning-sync');
+  const { learningDay } = await import('./shared/learning-activity');
+  account = {userId:'alice',name:'Alice'};
+  await sync.syncStatus(true);
+  request.mockClear();
+  for(let i=0;i<40;i++) {
+    vi.advanceTimersByTime(15000);
+    await sync.recordLearningActivity({day:learningDay(),sentences:1,durationMs:15000});
+    expect(await sync.syncStatus(true)).toMatchObject({connected:true});
+  }
+  expect(request).not.toHaveBeenCalled();
+  expect((await sync.syncStatus(true)).today).toEqual({sentences:40,durationMs:600000});
+  request.mockImplementation(async (_url, init) => {
+    expect(init?.method).toBe('POST');
+    const body = JSON.parse(init?.body as string);
+    expect(body).toMatchObject({type:'activity',days:[{day:learningDay(),sentences:40,durationMs:600000}]});
+    return ok(account);
+  });
+  await Promise.all([sync.syncLearningActivity(),sync.syncLearningActivity()]);
+  expect(request).toHaveBeenCalledTimes(1);
+  await sync.syncLearningActivity();
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+it('preserves failed activity uploads across worker restarts and retries with stable cumulative totals', async () => {
+  let sync = await import('./learning-sync');
+  const {learningDay}=await import('./shared/learning-activity');
+  account={userId:'alice',name:'Alice'};
+  await sync.refreshAccount();
+  await sync.recordLearningActivity({day:learningDay(),sentences:2,durationMs:15000});
+  request.mockRejectedValue(new Error('offline'));
+  await sync.syncLearningActivity();
+  const first = request.mock.calls.at(-1)![1]!.body;
+  vi.resetModules(); sync=await import('./learning-sync');
+  request.mockImplementation(async()=>ok(account));
+  await sync.syncLearningActivity();
+  expect(request.mock.calls.at(-1)![1]!.body).toBe(first);
+  request.mockClear();
+  await sync.syncLearningActivity();
+  expect(request).not.toHaveBeenCalled();
+});
+
+it('does not let a completed upload discard playback accumulated while it was in flight', async () => {
+  const sync=await import('./learning-sync');
+  const {learningDay}=await import('./shared/learning-activity');
+  account={userId:'alice',name:'Alice'};
+  await sync.refreshAccount();
+  await sync.recordLearningActivity({day:learningDay(),sentences:1,durationMs:10000});
+  let release!: (response:Response)=>void;
+  request.mockImplementation(async()=>new Promise<Response>(resolve=>{release=resolve;}));
+  const upload=sync.syncLearningActivity();
+  await vi.waitFor(()=>expect(request.mock.calls.some(([,init])=>init?.method==='POST')).toBe(true));
+  await sync.recordLearningActivity({day:learningDay(),sentences:1,durationMs:10000});
+  release(ok(account)); await upload;
+  request.mockImplementation(async()=>ok(account));
+  await sync.syncLearningActivity();
+  expect(JSON.parse(request.mock.calls.at(-1)![1]!.body as string).days[0]).toMatchObject({sentences:2,durationMs:20000});
+});
+
+it('does not repeatedly request account status when the service is unavailable', async () => {
+  const sync=await import('./learning-sync');
+  request.mockRejectedValue(new Error('offline'));
+  await sync.syncStatus(true);
+  for(let i=0;i<10;i++) await sync.syncStatus(true);
+  expect(request).toHaveBeenCalledTimes(1);
 });

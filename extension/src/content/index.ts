@@ -593,10 +593,10 @@ function finishCaptionPlayback(event: Event): void {
   if (document.fullscreenElement?.contains(video)) void document.exitFullscreen().catch(() => undefined);
 }
 
-const playbackActivity = new PlaybackActivity((activity) => {
-  void chrome.runtime.sendMessage({ type: "LEARNING_ACTIVITY", activity })?.catch(() => undefined);
+const playbackActivity = new PlaybackActivity((activity, synchronize) => {
+  void chrome.runtime.sendMessage({ type: "LEARNING_ACTIVITY", activity, synchronize })?.catch(() => undefined);
 });
-window.addEventListener("pagehide", () => playbackActivity.flush());
+window.addEventListener("pagehide", () => playbackActivity.flush(true));
 
 function tick(timestamp: number): void {
   syncYouTubeCaptionVisibility();

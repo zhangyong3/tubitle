@@ -37,7 +37,7 @@ export function LearningSyncIndicator({ loginNotice, onCollapse }: IndicatorProp
   const [status, setStatus] = useState<SyncStatus>();
   useEffect(() => {
     let active = true;
-    const refresh = () => { void sendMessage<SyncStatus>({ type: 'LEARNING_SYNC_STATUS' }).then(value => { if (active) setStatus(value); }).catch(() => { if (active) setStatus({ connected: false, pending: 0, error: '暂时无法连接 Tubitle，请稍后重试' }); }); };
+    const refresh = () => { void sendMessage<SyncStatus>({ type: 'LEARNING_SYNC_STATUS', cached: true }).then(value => { if (active) setStatus(value); }).catch(() => { if (active) setStatus({ connected: false, pending: 0, error: '暂时无法连接 Tubitle，请稍后重试' }); }); };
     refresh();
     const timer = window.setInterval(refresh, 15000);
     window.addEventListener('focus', refresh);

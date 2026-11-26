@@ -410,3 +410,38 @@ test('learning additions count the registration-local day rather than the server
   for(let i=0;i<5;i++) await db().insert(learningRecord).values({...learningInput.parse(input),id:`local-${i}`,userId,clientRecordId:`local-${i}`,createdAt:new Date(start.getTime()+1),updatedAt:new Date(),status:'new'});
   await assert.rejects(learning.create(userId,{...input,clientRecordId:'local-over'}),{reason:'LEARNING_DAILY_LIMIT'});
 });
+
+test('batched playback totals are idempotent, monotonic and separate from library record limits', async () => {
+  const { learningActivity } = await import('../src/config/db/schema');
+  const { eq } = await import('drizzle-orm');
+  const userId = 'playback-statistics';
+  await db().insert(user).values({id:userId,name:userId,email:`${userId}@example.test`});
+  const clientId=crypto.randomUUID();
+  const data={type:'activity' as const,clientId,days:[{day:'2026-11-26',sentences:10,durationMs:600000}]};
+  await Promise.all([learning.saveActivity(userId,data),learning.saveActivity(userId,data)]);
+  await learning.saveActivity(userId,{...data,days:[{...data.days[0],sentences:5,durationMs:300000}]});
+  let rows=await db().select().from(learningActivity).where(eq(learningActivity.userId,userId));
+  assert.equal(rows.length,1); assert.equal(rows[0].sentences,10); assert.equal(rows[0].durationMs,600000);
+  await learning.saveActivity(userId,{...data,days:[{...data.days[0],sentences:12,durationMs:720000}]});
+  rows=await db().select().from(learningActivity).where(eq(learningActivity.userId,userId));
+  assert.equal(rows[0].sentences,12); assert.equal(rows[0].durationMs,720000);
+  await learning.saveActivity(userId,{...data,clientId:crypto.randomUUID()});
+  assert.equal((await db().select().from(learningActivity).where(eq(learningActivity.userId,userId))).length,2);
+  assert.equal((await learning.list(userId)).total,0);
+});
+
+test('activity uploads require the session owner, reject invalid data and return account status without an extra GET', async () => {
+  const {testLogin}=await import('./helpers/login');
+  const {handleExtensionLearning}=await import('../src/routes/api/extension/learning');
+  const login=await testLogin('activity-upload');
+  const request=(body:unknown,owner=login.userId)=>{
+    globalThis.__minIntervalRateLimitStore=new Map();
+    return new Request('http://localhost:3000/api/extension/learning',{method:'POST',headers:{cookie:login.cookie,origin:'chrome-extension://'+'a'.repeat(32),'x-tubitle-extension':'1','x-tubitle-account':owner,'content-type':'application/json'},body:JSON.stringify(body)});
+  };
+  const body={type:'activity',clientId:crypto.randomUUID(),days:[{day:'2026-11-26',sentences:2,durationMs:600000}]};
+  const saved=await handleExtensionLearning(request(body));
+  assert.equal(saved.status,200);assert.equal((await saved.json()).data.userId,login.userId);
+  assert.equal((await handleExtensionLearning(request(body,'wrong-account'))).status,401);
+  for(const patch of [{days:[{day:'2026-02-31',sentences:2,durationMs:10}]},{days:[{day:'2026-11-26',sentences:-1,durationMs:10}]},{userId:'someone-else'}]) assert.equal((await handleExtensionLearning(request({...body,...patch}))).status,400);
+  assert.equal((await learning.list(login.userId)).total,0);
+});

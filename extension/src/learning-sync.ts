@@ -1,9 +1,13 @@
 import { addDailyLearning, readDailyLearning, type LearningActivity } from "./shared/learning-activity";
 import { SYNC_STATE_KEY, TUBITLE_SITE_URL, syncRecordWithoutOfflineDictionary, type SyncRecord, type SyncStatus } from './shared/learning-sync';
 interface Account { userId: string; name: string; plan?: 'free' | 'pro' }
-interface State { account?: Account; queue: SyncRecord[]; lastSyncedAt?: number; error?: string }
+export const ACTIVITY_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+interface ActivityTotals { sentences: number; durationMs: number; syncedSentences?: number; syncedDurationMs?: number }
+interface State { accountCheckedAt?: number; activityClientId?: string; activity?: Record<string, ActivityTotals>; account?: Account; queue: SyncRecord[]; lastSyncedAt?: number; error?: string }
 let writes = Promise.resolve();
 let flushing: Promise<void> | undefined;
+let activityFlushing: Promise<void> | undefined;
+let finalActivityFlush = false;
 let refreshing: Promise<Account | undefined> | undefined;
 async function read(): Promise<State> {
   // Discard retired manual credentials/queues; local query history is separate.
@@ -30,7 +34,7 @@ async function request(path: string, data?: unknown, userId?: string, signal?: A
   return response;
 }
 async function signedOut() {
-  await mutate(state => { state.account = undefined; state.queue = []; state.error = undefined; state.lastSyncedAt = undefined; });
+  await mutate(state => { state.account = undefined; state.queue = []; state.activity = {}; state.accountCheckedAt = Date.now(); state.error = undefined; state.lastSyncedAt = undefined; });
 }
 export function refreshAccount(): Promise<Account | undefined> {
   if (refreshing) return refreshing;
@@ -41,17 +45,27 @@ export function refreshAccount(): Promise<Account | undefined> {
     if (!response.ok || payload.code !== 0 || !payload.data?.userId) throw new Error('暂时无法确认登录状态');
     const account = payload.data;
     await mutate(state => {
-      if (state.account?.userId !== account.userId) { state.queue = []; state.lastSyncedAt = undefined; }
+      if (state.account?.userId !== account.userId) { state.queue = []; state.activity = {}; state.lastSyncedAt = undefined; }
+      state.accountCheckedAt = Date.now();
       state.account = account; if (!state.queue.length) state.error = undefined;
     });
     return account;
   })().finally(() => { refreshing = undefined; });
   return refreshing;
 }
-export async function syncStatus(): Promise<SyncStatus> {
+export async function syncStatus(cached = false): Promise<SyncStatus> {
   let verified = false;
   let connectionError: string | undefined;
-  try { await refreshAccount(); verified = true; } catch { connectionError = '暂时无法连接 Tubitle，请稍后重试'; }
+  try {
+    await writes;
+    const local = await read();
+    const pendingActivity = Object.values(local.activity || {}).some(value => value.sentences !== (value.syncedSentences || 0) || value.durationMs !== (value.syncedDurationMs || 0));
+    if (!cached || local.accountCheckedAt === undefined || (!pendingActivity && Date.now() - local.accountCheckedAt >= ACTIVITY_SYNC_INTERVAL_MS)) await refreshAccount();
+    verified = true;
+  } catch {
+    connectionError = '暂时无法连接 Tubitle，请稍后重试';
+    if (cached) await mutate(state => { state.accountCheckedAt = Date.now(); state.error = connectionError; });
+  }
   await writes;
   const state = await read();
   return { today: verified && state.account ? await readDailyLearning(state.account.userId) : undefined, connected: verified && !!state.account, name: state.account?.name, pending: state.queue.length, lastSyncedAt: state.lastSyncedAt, error: connectionError || state.error };
@@ -184,9 +198,56 @@ export async function requestAccountAnalysis(sentence: string, requestId: string
 }
 
 export async function recordLearningActivity(activity: LearningActivity): Promise<void> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(activity.day) || !Number.isInteger(activity.sentences) || activity.sentences < 0 || activity.sentences > 20000 || !Number.isFinite(activity.durationMs) || activity.durationMs < 0 || activity.durationMs > 30000 || (!activity.sentences && !activity.durationMs)) return;
   await writes;
   const owner = (await read()).account;
-  if (!owner) return;
-  const verified = await refreshAccount();
-  if (verified?.userId === owner.userId) await addDailyLearning(owner.userId, activity);
+  if (!owner) return; // Never backfill anonymous playback into a later account.
+  await addDailyLearning(owner.userId, activity);
+  await mutate(state => {
+    if (state.account?.userId !== owner.userId) return;
+    state.activityClientId ||= crypto.randomUUID();
+    state.activity ||= {};
+    const previous = state.activity[activity.day] || { sentences: 0, durationMs: 0 };
+    state.activity[activity.day] = { ...previous, sentences: previous.sentences + activity.sentences, durationMs: previous.durationMs + Math.round(activity.durationMs) };
+    for (const day of Object.keys(state.activity).sort().slice(0, -35)) {
+      const value = state.activity[day]!;
+      if (value.sentences === value.syncedSentences && value.durationMs === value.syncedDurationMs) delete state.activity[day];
+    }
+  });
+}
+
+export function syncLearningActivity(final = false): Promise<void> {
+  if (final) finalActivityFlush = true;
+  if (activityFlushing) return activityFlushing;
+  activityFlushing = (async () => {
+    do {
+      finalActivityFlush = false;
+      await uploadLearningActivity();
+    } while (finalActivityFlush);
+  })().finally(() => { activityFlushing = undefined; });
+  return activityFlushing;
+}
+async function uploadLearningActivity(): Promise<void> {
+  await writes;
+  const state = await read();
+  const owner = state.account;
+  if (!owner || !state.activityClientId) return;
+  const days = Object.entries(state.activity || {}).sort(([a], [b]) => a.localeCompare(b)).filter(([, value]) => value.sentences !== (value.syncedSentences || 0) || value.durationMs !== (value.syncedDurationMs || 0))
+    .slice(0, 7).map(([day, value]) => ({ day, sentences: value.sentences, durationMs: value.durationMs }));
+  if (!days.length) return;
+  try {
+    const response = await request('learning', { type: 'activity', clientId: state.activityClientId, days }, owner.userId);
+    if (response.status === 401) { await signedOut(); return; }
+    const payload = await response.json() as { code?: number; data?: Account };
+    if (!response.ok || payload.code !== 0 || payload.data?.userId !== owner.userId) return;
+    await mutate(current => {
+      if (current.account?.userId !== owner.userId || current.activityClientId !== state.activityClientId) return;
+      current.account = payload.data;
+      current.accountCheckedAt = Date.now();
+      for (const sent of days) {
+        const value = current.activity?.[sent.day];
+        if (value) { value.syncedSentences = sent.sentences; value.syncedDurationMs = sent.durationMs; }
+      }
+    });
+  } catch { /* Retain durable totals for the next interval or browser startup. */ }
 }

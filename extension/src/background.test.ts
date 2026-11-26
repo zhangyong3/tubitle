@@ -8,10 +8,11 @@ vi.mock('./shared/service-mode', async (importOriginal) => ({
   ...await importOriginal<typeof import('./shared/service-mode')>(), TUBITLE_SUBTITLE_SERVICE_ENABLED: true,
 }));
 
-const platform = vi.hoisted(() => ({ discover: vi.fn(), translate: vi.fn() }));
+const platform = vi.hoisted(() => ({ discover: vi.fn(), translate: vi.fn(), activity: vi.fn(), syncActivity: vi.fn() }));
 
 vi.mock("./learning-sync", () => ({
   getAccountTranslationSelection: platform.discover, requestAccountTranslation: platform.translate,
+  recordLearningActivity: platform.activity, syncLearningActivity: platform.syncActivity,
   syncStatus: async () => ({ connected: false, pending: 0 }), flushLearning: async () => undefined,
   enqueueLearning: async () => undefined, requestAccountAnalysis: vi.fn(), AnalysisAccessError: class extends Error {},
 }));
@@ -32,8 +33,15 @@ describe("subtitle translation from the extension background", () => {
   const request = vi.fn<typeof fetch>();
   let mode: "custom" | "tubitle";
   let targetLanguage: string;
+  let alarmListeners: Array<(alarm: {name:string}) => void>;
+  let removedListeners: Array<(tabId:number) => void>;
+  const createAlarm = vi.fn();
 
   beforeEach(async () => {
+    alarmListeners = []; removedListeners = [];
+    createAlarm.mockReset().mockResolvedValue(undefined);
+    platform.activity.mockReset().mockResolvedValue(undefined);
+    platform.syncActivity.mockReset().mockResolvedValue(undefined);
     mode = "custom";
     targetLanguage = "zh";
     cache.rows.clear();
@@ -50,7 +58,8 @@ describe("subtitle translation from the extension background", () => {
     vi.stubGlobal("fetch", request);
     let onConnect: (port: unknown) => void;
     vi.stubGlobal("chrome", {
-      alarms: { create: async () => undefined, onAlarm: { addListener() {} } },
+      alarms: { create: createAlarm, onAlarm: { addListener: (handler: (alarm: {name:string}) => void) => alarmListeners.push(handler) } },
+      tabs: { onRemoved: { addListener: (handler: (tabId:number) => void) => removedListeners.push(handler) } },
       runtime: {
         id: "qa-extension", getURL: (path: string) => `chrome-extension://qa-extension/${path}`,
         onStartup: { addListener() {} },
@@ -92,7 +101,28 @@ describe("subtitle translation from the extension background", () => {
   const subtitle = (text: string, priority: "current" | "prefetch" = "prefetch") =>
     send({ type: "TRANSLATE", provider: "microsoft", text, sourceLanguage: "en", priority });
 
+  it("syncs playback every ten minutes and on YouTube exit, rather than on worker wake or the one-minute record timer", async () => {
+    await vi.waitFor(() => expect(createAlarm).toHaveBeenCalledWith('learning-activity-sync', {periodInMinutes:10}));
+    expect(platform.syncActivity).not.toHaveBeenCalled();
+    for (const listener of alarmListeners) listener({name:'learning-sync'});
+    expect(platform.syncActivity).not.toHaveBeenCalled();
+    for (const listener of alarmListeners) listener({name:'learning-activity-sync'});
+    expect(platform.syncActivity).toHaveBeenCalledTimes(1);
+    await send({type:'LEARNING_ACTIVITY',activity:{day:'2026-11-26',sentences:1,durationMs:1000}}, {tab:{id:7}});
+    expect(platform.syncActivity).toHaveBeenCalledTimes(1);
+    await send({type:'LEARNING_ACTIVITY',activity:{day:'2026-11-26',sentences:0,durationMs:0},synchronize:true}, {tab:{id:7}});
+    expect(platform.syncActivity).toHaveBeenCalledTimes(2);
+    for (const listener of removedListeners) listener(8);
+    expect(platform.syncActivity).toHaveBeenCalledTimes(2);
+    for (const listener of removedListeners) listener(7);
+    expect(platform.syncActivity).toHaveBeenCalledTimes(3);
+  });
+
   it("translates dictionary definitions even when their language is excluded from subtitle translation", async () => {
+    alarmListeners = []; removedListeners = [];
+    createAlarm.mockReset().mockResolvedValue(undefined);
+    platform.activity.mockReset().mockResolvedValue(undefined);
+    platform.syncActivity.mockReset().mockResolvedValue(undefined);
     mode = "custom";
     targetLanguage = "ja";
     const skipped = await send({ type: "TRANSLATE", provider: "microsoft", text: "学习", sourceLanguage: "zh" });

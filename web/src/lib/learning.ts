@@ -68,3 +68,17 @@ export function videoLink(videoId: string, seconds: number) {
 export function formatVideoTime(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
+
+export const learningActivityInput = z.object({
+  type: z.literal('activity'),
+  clientId: z.string().uuid(),
+  days: z.array(z.object({
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+      const date = new Date(`${value}T00:00:00Z`);
+      return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    }),
+    sentences: z.number().int().min(0).max(1000000),
+    durationMs: z.number().int().min(0).max(16 * 86400000),
+  }).strict()).min(1).max(7),
+}).strict();
+export type LearningActivityInput = z.infer<typeof learningActivityInput>;

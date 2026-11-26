@@ -723,3 +723,14 @@ export const analysisUsage = table('analysis_usage', {
   uniqueIndex('idx_analysis_user_request').on(t.userId, t.requestId),
   uniqueIndex('idx_analysis_user_day_slot').on(t.userId, t.day, t.slot),
 ]);
+
+// Cumulative playback totals per account, browser installation and day.
+export const learningActivity = table('learning_activity', {
+  id: varchar('id', { length: 191 }).primaryKey(),
+  userId: varchar('user_id', { length: 191 }).notNull().references(() => user.id, { onDelete: 'cascade' }),
+  clientId: varchar('client_id', { length: 191 }).notNull(),
+  day: varchar('day', { length: 191 }).notNull(),
+  sentences: int('sentences').notNull(),
+  durationMs: int('duration_ms').notNull(),
+  updatedAt: timestamp('updated_at').notNull(),
+}, t => [index('idx_learning_activity_user_day').on(t.userId, t.day)]);
