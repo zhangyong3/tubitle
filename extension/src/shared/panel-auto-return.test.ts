@@ -1,0 +1,42 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { startPanelAutoReturn } from './panel-auto-return';
+import { DEFAULT_SETTINGS } from './settings';
+afterEach(() => vi.useRealTimers());
+const state = { embedded: true, playing: true, tab: 'analysis' as const, seconds: 10, analysisStatus: 'streaming' as const };
+it('waits for the stream to finish before starting a full ten-second countdown', () => {
+  vi.useFakeTimers();
+  const onReturn = vi.fn();
+  startPanelAutoReturn(state, onReturn);
+  vi.advanceTimersByTime(60_000);
+  expect(onReturn).not.toHaveBeenCalled();
+  startPanelAutoReturn({ ...state, analysisStatus: 'done' }, onReturn);
+  vi.advanceTimersByTime(9_999);
+  expect(onReturn).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(onReturn).toHaveBeenCalledOnce();
+  expect(DEFAULT_SETTINGS.autoReturnToSubtitlesSeconds).toBe(10);
+});
+it('cancels an existing countdown when another analysis starts', () => {
+  vi.useFakeTimers();
+  const onReturn = vi.fn();
+  const cancel = startPanelAutoReturn({ ...state, analysisStatus: 'done' }, onReturn);
+  vi.advanceTimersByTime(9_000);
+  cancel?.();
+  startPanelAutoReturn(state, onReturn);
+  vi.advanceTimersByTime(30_000);
+  expect(onReturn).not.toHaveBeenCalled();
+  startPanelAutoReturn({ ...state, analysisStatus: 'done' }, onReturn);
+  vi.advanceTimersByTime(10_000);
+  expect(onReturn).toHaveBeenCalledOnce();
+});
+it('keeps dictionary timing independent of a background analysis and honors pause and zero', () => {
+  vi.useFakeTimers();
+  const onReturn = vi.fn();
+  startPanelAutoReturn({ ...state, playing: false }, onReturn);
+  startPanelAutoReturn({ ...state, seconds: 0, analysisStatus: 'done' }, onReturn);
+  vi.advanceTimersByTime(20_000);
+  expect(onReturn).not.toHaveBeenCalled();
+  startPanelAutoReturn({ ...state, tab: 'dictionary' }, onReturn);
+  vi.advanceTimersByTime(10_000);
+  expect(onReturn).toHaveBeenCalledOnce();
+});

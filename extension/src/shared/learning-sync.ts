@@ -23,3 +23,19 @@ export interface SyncStatus {
   lastSyncedAt?: number;
   error?: string;
 }
+
+export const DICTIONARY_SNAPSHOT_PREFIX = 'tubitle-dictionaries-v1:';
+
+// Apply again at upload time so queues saved by older versions remain local-only.
+export function syncRecordWithoutOfflineDictionary(record: SyncRecord): SyncRecord {
+  if (record.kind !== 'word' || !record.analysis?.startsWith(DICTIONARY_SNAPSHOT_PREFIX)) return record;
+  let analysis: string | undefined;
+  try {
+    const snapshots: unknown = JSON.parse(record.analysis.slice(DICTIONARY_SNAPSHOT_PREFIX.length));
+    if (Array.isArray(snapshots)) {
+      const online = snapshots.filter(snapshot => snapshot && ['bing', 'youdao', 'wordnet'].includes(snapshot.provider));
+      if (online.length) analysis = DICTIONARY_SNAPSHOT_PREFIX + JSON.stringify(online);
+    }
+  } catch { /* Never upload an unparseable dictionary payload. */ }
+  return { ...record, analysis };
+}

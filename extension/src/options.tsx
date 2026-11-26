@@ -20,7 +20,7 @@ import {
 import type { ExtensionSettings, ShortcutSettings, TranslationProvider } from "./shared/types";
 import { selectDictionaryDirectoryFiles } from "./shared/dictionary-directory";
 import { sendMessage } from "./shared/messaging";
-import { KEYLESS_PROVIDERS, isKeylessProvider, translationProvider } from "./shared/service-mode";
+import { KEYLESS_PROVIDERS, isKeylessProvider } from "./shared/service-mode";
 
 const categories = [
   { id: "general", label: "常规", icon: "settings", description: "管理学习记录与使用偏好。" },
@@ -69,6 +69,7 @@ export function App() {
   const [dictionaryBusy, setDictionaryBusy] = useState(false);
   const [dictionaryMessage, setDictionaryMessage] = useState("");
   const [providerMessage, setProviderMessage] = useState("");
+  const [testedProvider, setTestedProvider] = useState<TranslationProvider | "llm">();
   const dictionaryDirectoryInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -140,6 +141,7 @@ export function App() {
   }
 
   async function testProvider(provider: TranslationProvider | "llm") {
+    setTestedProvider(provider);
     setProviderMessage("正在测试连接…");
     try {
       if (!await requestApiPermissions(form, provider)) throw new Error("需要先允许访问所配置的 API 域名");
@@ -231,37 +233,22 @@ export function App() {
         <form onSubmit={(event) => event.preventDefault()} onBlur={normalizeField}>
         <div hidden={activeCategory !== "services"}>
         <section className="card">
-          <h2>{t("服务方式")}</h2>
-          <div className="field">
-            <label htmlFor="service-mode">{t("字幕翻译")}</label>
-            <select id="service-mode" value={form.serviceMode} onChange={(event) => {
-              const mode = event.target.value === "custom" ? "custom" : "tubitle";
-              setForm({ ...form, serviceMode: mode, provider: translationProvider(mode, form.provider) });
-              setProviderMessage("");
-            }}>
-              <option value="tubitle">{t("使用 Tubitle 服务（默认）")}</option>
-              <option value="custom">{t("选择翻译引擎（免 Key / 自备 API）")}</option>
-            </select>
-          </div>
-          <p className="hint">{form.serviceMode === "tubitle"
-            ? t("由 Tubitle 提供字幕翻译，受账号套餐额度限制。")
-            : t("字幕直接交给所选翻译引擎，不消耗 Tubitle 翻译额度。")}</p>
-        </section>
-        {form.serviceMode === "custom" && <>
-        <section className="card">
           <h2>{t("字幕翻译 API")}</h2>
           <div className="field">
             <label htmlFor="provider">{t("翻译服务商")}</label>
-            <select id="provider" value={form.provider} onChange={(event) => { setForm({ ...form, provider: event.target.value as TranslationProvider }); setProviderMessage(""); }}>
-              <optgroup label={t("免 Key 翻译")} >{KEYLESS_PROVIDERS.map(([id, name]) => <option value={id} key={id}>{name}{["baidu-free", "deepl-free"].includes(id) ? ` (${t("实验入口")})` : ""}</option>)}</optgroup>
+            <select id="provider" value={form.provider} onChange={(event) => { setForm({ ...form, serviceMode: event.target.value === "hy-mt-local" ? "tubitle" : "custom", provider: event.target.value as TranslationProvider }); setProviderMessage(""); }}>
+              {/* Temporarily closed. Restore this entry and TUBITLE_SUBTITLE_SERVICE_ENABLED together.
+              <option value="hy-mt-local">{t("Tubitle 服务（有配额限制）")}</option>
+              */}
+              <optgroup label={t("免 Key 翻译")} >{KEYLESS_PROVIDERS.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</optgroup>
               <optgroup label={t("自备 API Key")}><option value="microsoft">Microsoft Translator</option>
               <option value="google">Google Cloud Translation</option></optgroup>
             </select>
           </div>
-          {isKeylessProvider(form.provider) ? <>
+          {form.provider === "hy-mt-local" ? <p className="hint">{t("由 Tubitle 提供字幕翻译，受账号套餐额度限制。")}</p> : isKeylessProvider(form.provider) ? <>
           <p className="hint">{form.provider === "chrome-local" ? t("翻译在本机运行。需桌面 Chrome 138 或更新版本；首次使用需要点击测试并下载语言包，视频页面也可能需要点击播放以完成初始化。") : t("无需填写 Key，字幕会发送到所选服务。服务可能限流或变更；不可用时请切换引擎。点击测试可授予该服务域名的访问权限。")}</p>
-          {["baidu-free", "deepl-free"].includes(form.provider) && <p className="hint">{t("实验入口：当前实测受到服务方限制，测试失败时请使用其他引擎。")}</p>}
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider(form.provider)}>{t("测试翻译引擎")}</button></div>
+          {testedProvider === form.provider && providerMessage && <p className="hint" role="status">{t(providerMessage)}</p>}
           </> : form.provider === "microsoft" ? <>
           <h3>Microsoft Translator</h3>
           <div className="grid">
@@ -270,13 +257,14 @@ export function App() {
             <div className="field full"><label htmlFor="ms-endpoint">Endpoint</label><input id="ms-endpoint" type="url" value={form.microsoftTranslatorEndpoint} onChange={(event) => setForm({ ...form, microsoftTranslatorEndpoint: event.target.value })} /></div>
           </div>
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("microsoft")}>{t("测试 Microsoft")}</button></div>
+          {testedProvider === "microsoft" && providerMessage && <p className="hint" role="status">{t(providerMessage)}</p>}
           </> : <>
           <h3>Google Cloud Translation</h3>
           <div className="grid"><div className="field full"><label htmlFor="google-key">API Key</label><input id="google-key" type="password" value={form.googleTranslateApiKey} onChange={(event) => setForm({ ...form, googleTranslateApiKey: event.target.value })} autoComplete="off" /></div></div>
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("google")}>{t("测试 Google")}</button></div>
+          {testedProvider === "google" && providerMessage && <p className="hint" role="status">{t(providerMessage)}</p>}
           </>}
         </section>
-        </>}
         <section className="card">
           <h2>{t("AI 语句分析 API")}</h2>
           <div className="field"><label htmlFor="analysis-service-mode">{t("AI 语句分析服务")}</label>
@@ -284,7 +272,7 @@ export function App() {
             <option value="tubitle">{t("Tubitle 服务（有配额限制）")}</option>
             <option value="custom">{t("自己的大模型 API（不受 Tubitle 配额限制）")}</option>
           </select></div>
-          {form.analysisServiceMode === "tubitle" ? <p className="hint">{t("AI 解析需登录，免费版每天 3 次，Pro 每天 100 次。")}</p> : <>
+          {form.analysisServiceMode === "tubitle" ? <p className="hint">{t("AI 解析需登录，免费版每天 2 次，Pro 每天 100 次。")}</p> : <>
           <p className="hint">{t("不消耗 Tubitle 额度，费用与使用限额由你的 API 提供方决定。")}</p>
           <p className="hint">{t("填写 OpenAI 兼容接口的地址、API Key 和模型名称。无需登录 Tubitle 即可使用自备 API 解析句子。")}</p>
           <div className="grid">
@@ -293,10 +281,9 @@ export function App() {
             <div className="field"><label htmlFor="llm-model">Model</label><input id="llm-model" value={form.llmModel} onChange={(event) => setForm({ ...form, llmModel: event.target.value })} /></div>
           </div>
           <div className="actions"><button className="secondary" type="button" onClick={() => void testProvider("llm")}>{t("测试大模型")}</button></div>
+          {testedProvider === "llm" && providerMessage && <p className="hint" role="status">{t(providerMessage)}</p>}
         </>}
         </section>
-        {(form.serviceMode === "custom" || form.analysisServiceMode === "custom") && <div className="permission-note"><p className="hint">{t("设置会自动保存。首次使用自定义 API 域名时，需要允许浏览器访问该域名。")}</p><button className="secondary" type="button" onClick={() => void requestApiPermissions(form).then((allowed) => setProviderMessage(allowed ? "已允许访问 API 域名" : "未获得 API 域名访问权限")).catch((error: Error) => setProviderMessage(error.message))}>{t("允许访问 API 域名")}</button></div>}
-        {providerMessage && <p className="hint" role="status">{t(providerMessage)}</p>}
         </div>
         <div hidden={activeCategory !== "online-dictionary"}>
           <section className="card"><h2>{t("在线词典（可多选）")}</h2>
@@ -339,7 +326,7 @@ export function App() {
                 aria-describedby="auto-return-subtitles-hint"
                 value={Number.isNaN(form.autoReturnToSubtitlesSeconds) ? "" : form.autoReturnToSubtitlesSeconds}
                 onChange={(event) => setForm({ ...form, autoReturnToSubtitlesSeconds: event.target.valueAsNumber })} />
-              <span className="hint" id="auto-return-subtitles-hint">{t("播放时自动返回字幕面板（默认20秒，填0关闭）。")}</span>
+              <span className="hint" id="auto-return-subtitles-hint">{t("播放时自动返回字幕面板（默认10秒，填0关闭）。")}</span>
             </div>
           </div>
         </section>
@@ -401,7 +388,7 @@ export function App() {
             </div>
           </div>
         </section>
-        <section className="card"><h2>{t("关于 Tubitle")}</h2><p className="hint">{t("默认使用 Tubitle 服务，无需填写 API Key。自备 API 的密钥仅保存在本机浏览器，不会上传到 Tubitle。")}</p><p className="hint">{t("所有设置自动保存，并立即应用到已打开的学习面板与字幕。")}</p></section>
+        <section className="card"><h2>{t("关于 Tubitle")}</h2><p className="hint">{t("默认使用 Chrome Translator，无需填写 API Key。自备 API 的密钥仅保存在本机浏览器，不会上传到 Tubitle。")}</p><p className="hint">{t("所有设置自动保存，并立即应用到已打开的学习面板与字幕。")}</p></section>
         </div><div hidden={activeCategory !== "shortcuts"}>
         <section className="card">
           <h2>{t("快捷键")}</h2>

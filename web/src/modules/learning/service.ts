@@ -1,10 +1,23 @@
-import { and, count, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { userQuotaTimeZone } from '@/lib/user-quota-timezone';
+import { quotaDayWindow } from '@/lib/quota-timezone';
+import { atomic, AtomicGuardError, guard } from '@/core/db/atomic';
+import { LEARNING_FREE_LIMITS } from '@/config/learning-plans';
+import { planFor } from '@/lib/learning-plan';
+import { readDictionarySnapshots } from '@/lib/dictionary-snapshots';
+import { and, count, desc, eq, gte, lt, isNull, or, sql } from 'drizzle-orm';
 
 import { db } from '@/core/db';
-import { learningRecord } from '@/config/db/schema';
+import { learningRecord, user } from '@/config/db/schema';
 import { getUuid } from '@/lib/hash';
 import { learningInput, type LearningInput } from '@/lib/learning';
 
+export class LearningQuotaError extends Error {
+  constructor(public reason: 'LEARNING_DAILY_LIMIT' | 'LEARNING_TOTAL_LIMIT') {
+    super(reason === 'LEARNING_DAILY_LIMIT'
+      ? '免费版每天可新增 5 条学习库记录，请明日再试或升级 Pro'
+      : '免费版学习库最多保留 100 条记录，请删除部分记录或升级 Pro');
+  }
+}
 function owned(userId: string) {
   return and(
     eq(learningRecord.userId, userId),
@@ -37,26 +50,44 @@ export async function create(
   const clientRecordId = parsed.clientRecordId || getUuid();
   const id = getUuid();
   const now = new Date();
-  // Unique user + client key makes a retried save idempotent, including concurrent requests.
-  const query = db()
-    .insert(learningRecord)
-    .values({
-      ...parsed,
-      id,
-      userId,
-      clientRecordId,
-      status: 'new',
-      createdAt: now,
-      updatedAt: now,
+  const free = await planFor(userId, now) === 'free';
+  const { start, end } = quotaDayWindow(now, await userQuotaTimeZone(userId));
+  try {
+    await atomic(q => {
+      const query = q.insert(learningRecord).values({ ...parsed, id, userId, clientRecordId, status: 'new', createdAt: now, updatedAt: now });
+      const insert = typeof query.onConflictDoNothing === 'function'
+        ? query.onConflictDoNothing({ target: [learningRecord.userId, learningRecord.clientRecordId] })
+        : query.onDuplicateKeyUpdate({ set: { id: sql`${learningRecord.id}` } });
+      return [
+        // Serialize account-level limits on transactional databases; batch databases serialize writes.
+        free && guard({ table: user, column: 'id', where: eq(user.id, userId), require: sql`1 = 1`, message: 'learning account lock' }),
+        insert,
+        // These guards only match a newly inserted row. Idempotent retries and
+        // dictionary enrichment remain available even when a limit is reached.
+        free && guard({ table: learningRecord, column: 'id', where: eq(learningRecord.id, id),
+          require: sql`(select count(*) from ${learningRecord} where ${owned(userId)}) <= ${LEARNING_FREE_LIMITS.total}`,
+          message: 'LEARNING_TOTAL_LIMIT' }),
+        free && guard({ table: learningRecord, column: 'id', where: eq(learningRecord.id, id),
+          require: sql`(select count(*) from ${learningRecord} where ${and(eq(learningRecord.userId, userId), gte(learningRecord.createdAt, start), lt(learningRecord.createdAt, end))}) <= ${LEARNING_FREE_LIMITS.daily}`,
+          message: 'LEARNING_DAILY_LIMIT' }),
+      ];
     });
-  if (typeof query.onConflictDoNothing === 'function') {
-    await query.onConflictDoNothing({
-      target: [learningRecord.userId, learningRecord.clientRecordId],
-    });
-  } else {
-    await query.onDuplicateKeyUpdate({
-      set: { id: sql`${learningRecord.id}` },
-    });
+  } catch (error) {
+    if (error instanceof AtomicGuardError && ['LEARNING_DAILY_LIMIT', 'LEARNING_TOTAL_LIMIT'].includes(error.message)) {
+      // Both postconditions protect the same column in batch mode. Determine
+      // which limit is exhausted after the rejected insert has rolled back.
+      const [total] = await db().select({ value: count() }).from(learningRecord).where(owned(userId));
+      throw new LearningQuotaError(Number(total.value) >= LEARNING_FREE_LIMITS.total ? 'LEARNING_TOTAL_LIMIT' : 'LEARNING_DAILY_LIMIT');
+    }
+    throw error;
+  }
+  // Dictionary providers finish after the initial word save. Enrich that same
+  // owned record without replacing notes, status, timestamps or deleted records.
+  if (parsed.kind === 'word' && readDictionarySnapshots(parsed.analysis).length) {
+    await db().update(learningRecord).set({ analysis: parsed.analysis, updatedAt: now }).where(and(
+      owned(userId), eq(learningRecord.clientRecordId, clientRecordId),
+      eq(learningRecord.kind, 'word'), eq(learningRecord.text, parsed.text)
+    ));
   }
   const [row] = await db()
     .select(publicColumns)

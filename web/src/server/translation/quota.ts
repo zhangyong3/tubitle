@@ -70,13 +70,15 @@ export async function consumeSubtitleQuota(
   config: Record<string, string>,
   now = new Date()
 ): Promise<void> {
+  // Registered plans no longer have a daily bilingual-subtitle sentence cap.
+  if (plan !== 'guest') return;
   const day = analysisDay(now);
   const limit = Number(
     config[`translation_${plan}_daily_limit`] ??
       TRANSLATION_DEFAULTS[`translation_${plan}_daily_limit`]
   );
   if (!Number.isSafeInteger(limit) || limit <= 0)
-    throw new SubtitleQuotaError(plan === 'guest', plan === 'pro');
+    throw new SubtitleQuotaError(true);
   const key = `${id}:${limit}`;
   const previous = locks.get(key) ?? Promise.resolve();
   const work = previous
@@ -89,7 +91,7 @@ export async function consumeSubtitleQuota(
       const local = leases.get(key);
       if (local?.day === day) {
         if (local.left < 0)
-          throw new SubtitleQuotaError(plan === 'guest', plan === 'pro');
+          throw new SubtitleQuotaError(true);
         if (local.left > 0) {
           local.left--;
           return;
@@ -129,7 +131,7 @@ export async function consumeSubtitleQuota(
           }
         }
         reserveLease(0); // Cache exhaustion for this day and configured limit.
-        throw new SubtitleQuotaError(plan === 'guest', plan === 'pro');
+        throw new SubtitleQuotaError(true);
       }
       const insert = db().insert(translationQuota).values({ id, day, used: 0 });
       await insert.onDuplicateKeyUpdate({
@@ -143,7 +145,7 @@ export async function consumeSubtitleQuota(
         const grant = Math.min(5, limit - Number(row.used));
         if (grant <= 0) {
           reserveLease(0);
-          throw new SubtitleQuotaError(plan === 'guest', plan === 'pro');
+          throw new SubtitleQuotaError(true);
         }
         try {
           await atomic((q) => [

@@ -1,5 +1,5 @@
 import { keylessRequest, keylessResult } from '../extension/src/keyless-providers.ts';
-const engines = ['edge-free', 'google-free', 'volcengine-free', 'tencent-free', 'baidu-free', 'deepl-free'] as const;
+const engines = ['edge-free', 'google-free', 'volcengine-free', 'tencent-free'] as const;
 for (const provider of engines) {
   const started = Date.now();
   try {

@@ -1,6 +1,6 @@
 import { addDailyLearning, readDailyLearning, type LearningActivity } from "./shared/learning-activity";
-import { SYNC_STATE_KEY, TUBITLE_SITE_URL, type SyncRecord, type SyncStatus } from './shared/learning-sync';
-interface Account { userId: string; name: string }
+import { SYNC_STATE_KEY, TUBITLE_SITE_URL, syncRecordWithoutOfflineDictionary, type SyncRecord, type SyncStatus } from './shared/learning-sync';
+interface Account { userId: string; name: string; plan?: 'free' | 'pro' }
 interface State { account?: Account; queue: SyncRecord[]; lastSyncedAt?: number; error?: string }
 let writes = Promise.resolve();
 let flushing: Promise<void> | undefined;
@@ -42,7 +42,7 @@ export function refreshAccount(): Promise<Account | undefined> {
     const account = payload.data;
     await mutate(state => {
       if (state.account?.userId !== account.userId) { state.queue = []; state.lastSyncedAt = undefined; }
-      state.account = account; state.error = undefined;
+      state.account = account; if (!state.queue.length) state.error = undefined;
     });
     return account;
   })().finally(() => { refreshing = undefined; });
@@ -57,11 +57,14 @@ export async function syncStatus(): Promise<SyncStatus> {
   return { today: verified && state.account ? await readDailyLearning(state.account.userId) : undefined, connected: verified && !!state.account, name: state.account?.name, pending: state.queue.length, lastSyncedAt: state.lastSyncedAt, error: connectionError || state.error };
 }
 export async function enqueueLearning(record: SyncRecord) {
+  record = syncRecordWithoutOfflineDictionary(record);
   let account: Account | undefined;
   try { account = await refreshAccount(); } catch { return; }
   if (!account) return; // Anonymous queries stay local and are never backfilled.
   await mutate(state => {
-    if (state.account?.userId !== account.userId || state.queue.some(item => item.clientRecordId === record.clientRecordId)) return;
+    if (state.account?.userId !== account.userId) return;
+    const index = state.queue.findIndex(item => item.clientRecordId === record.clientRecordId);
+    if (index >= 0) { state.queue[index] = { ...state.queue[index], ...record, analysis: record.analysis || state.queue[index]!.analysis }; return; }
     if (state.queue.length >= 1000) { state.error = '待上传记录已达上限，新记录保存在本地历史中'; return; }
     state.queue.push(record);
   });
@@ -84,21 +87,26 @@ async function drain() {
     try {
       // Server compares this queue owner against the live cookie session atomically
       // with authentication. A newly signed-in account cannot receive old records.
-      const response = await request('learning', record, account.userId);
+      const response = await request('learning', syncRecordWithoutOfflineDictionary(record), account.userId);
       if (response.status === 401) { await signedOut(); return; }
-      const payload = await response.json() as { code?: number };
-      if (!response.ok || payload.code !== 0) throw new Error('上传暂未成功，稍后自动重试');
+      const payload = await response.json() as { code?: number; message?: string };
+      if (!response.ok || payload.code !== 0) throw new Error(payload.message || '上传暂未成功，稍后自动重试');
       await mutate(current => {
         if (current.account?.userId !== account.userId) return;
-        current.queue = current.queue.filter(item => item.clientRecordId !== record.clientRecordId);
+        current.queue = current.queue.filter(item => item.clientRecordId !== record.clientRecordId || JSON.stringify(item) !== JSON.stringify(record));
         current.error = undefined; current.lastSyncedAt = Date.now();
       });
-    } catch {
-      await mutate(current => { if (current.account?.userId === account.userId) current.error = '上传暂未成功，稍后自动重试'; });
+    } catch (error) {
+      await mutate(current => { if (current.account?.userId === account.userId) current.error = error instanceof Error ? error.message : '上传暂未成功，稍后自动重试'; });
       return;
     }
     await new Promise(resolve => setTimeout(resolve, 250));
   }
+}
+export async function requireTranscriptPdfAccess(): Promise<void> {
+  const account = await refreshAccount();
+  if (!account) throw new Error('请先登录 Tubitle 后下载旁批 PDF');
+  if (account.plan !== 'pro') throw new Error('旁批 PDF 下载为 Pro 功能，请升级后使用');
 }
 export class AnalysisAccessError extends Error {
   constructor(message: string, public reason?: string, public actionUrl?: string) { super(message); }

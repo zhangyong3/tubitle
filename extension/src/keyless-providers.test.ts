@@ -5,8 +5,6 @@ const cases = [
   ['google-free', { protocol: 'https:', host: 'translate.googleapis.com' }, {sentences:[{trans:'學習'}, {trans:'語言。'}]}],
   ['volcengine-free', { protocol: 'https:', host: 'translate.volcengine.com' }, {translation:'學習語言。'}],
   ['tencent-free', { protocol: 'https:', host: 'transmart.qq.com' }, {auto_translation:['學習語言。']}],
-  ['baidu-free', { protocol: 'https:', host: 'fanyi.baidu.com' }, {type:2,data:[{dst:'學習語言。'}]}],
-  ['deepl-free', { protocol: 'https:', host: 'www2.deepl.com' }, {result:{texts:[{text:'學習語言。'}]}}],
 ] as const;
 afterEach(() => vi.unstubAllGlobals());
 for (const [provider, endpoint, fixture] of cases) {
@@ -24,7 +22,6 @@ it('preserves provider-specific Traditional Chinese language codes', () => {
   expect(new URL(keylessRequest('edge-free','Hello','en','zh-TW').url).searchParams.get('to')).toBe('zh-Hant');
   expect(new URL(keylessRequest('google-free','Hello','en','zh-TW').url).searchParams.get('tl')).toBe('zh-TW');
   expect(JSON.parse(keylessRequest('volcengine-free','Hello','en','zh-TW').init.body as string).target_language).toBe('zh-Hant');
-  expect(new URLSearchParams(keylessRequest('baidu-free','Hello','en','zh-TW').init.body as string).get('to')).toBe('cht');
   expect(() => keylessRequest('tencent-free','Hello','en','zh-TW')).toThrow('不支持繁体');
 });
 it('rejects rate limiting without converting the error to a cached translation', async () => {
@@ -36,8 +33,4 @@ it('does not send an aborted queued request', async () => {
   const controller = new AbortController(); controller.abort();
   await expect(translateKeyless('edge-free','Hello','en','zh',controller.signal)).rejects.toThrow();
   expect(fetch).not.toHaveBeenCalled();
-});
-
-it('never accepts a DeepL protocol retirement notice as a translation', () => {
-  expect(() => keylessResult('deepl-free', {result:{texts:[{text:"You're using an older version of DeepL. To continue using the app, please update to the latest version."}]}})).toThrow('停止支持');
 });

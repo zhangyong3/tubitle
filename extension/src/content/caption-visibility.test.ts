@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../shared/settings";
 
+// Exercise the retained account/quota flows independently of the closed public entry.
+vi.mock('../shared/service-mode', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../shared/service-mode')>(), TUBITLE_SUBTITLE_SERVICE_ENABLED: true,
+}));
+
 const fixture = vi.hoisted(() => ({
   storageListeners: [] as Array<(changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string) => void>,
   showTranslationError: vi.fn(),
@@ -68,7 +73,7 @@ async function openFixture(url = "https://www.youtube.com/watch?v=test") {
   fixture.storageListeners.length = 0;
   fixture.fetchCaptions.mockImplementation(async () => captions());
   let pressed = "false";
-  let storedSettings = { ...DEFAULT_SETTINGS };
+  let storedSettings: typeof DEFAULT_SETTINGS = { ...DEFAULT_SETTINGS, serviceMode: "tubitle", provider: "hy-mt-local" };
   const video = {
     currentTime: 0.5, duration: 2, paused: true, ended: false, seeking: false,
     playbackRate: 1, readyState: 4, HAVE_FUTURE_DATA: 3,

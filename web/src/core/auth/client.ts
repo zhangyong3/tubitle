@@ -1,3 +1,4 @@
+import { REGISTRATION_TIME_ZONE_COOKIE } from '@/lib/quota-timezone';
 import { oneTapClient } from 'better-auth/client/plugins';
 import { createAuthClient } from 'better-auth/react';
 
@@ -6,7 +7,14 @@ const baseURL =
     ? window.location.origin
     : import.meta.env?.VITE_APP_URL || 'http://localhost:3000';
 
-export const authClient = createAuthClient({ baseURL });
+function captureRegistrationTimeZone() {
+  if (typeof document === 'undefined') return;
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  document.cookie = `${REGISTRATION_TIME_ZONE_COOKIE}=${encodeURIComponent(timeZone)}; Path=/; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+}
+const fetchOptions = { onRequest: captureRegistrationTimeZone };
+
+export const authClient = createAuthClient({ baseURL, fetchOptions });
 
 export const {
   signIn,
@@ -23,6 +31,7 @@ export const {
 export function getAuthClient(configs: Record<string, string>) {
   return createAuthClient({
     baseURL,
+    fetchOptions,
     plugins:
       configs.google_client_id && configs.google_one_tap_enabled === 'true'
         ? [

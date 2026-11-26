@@ -115,3 +115,11 @@ export async function lookupOnlineDictionary(provider: OnlineDictionary, word: s
   if(result.senses.length) {if(cache.size>=300)cache.delete(cache.keys().next().value!);cache.set(key,{at:Date.now(),result});}
   return result;
 }
+
+export async function lookupDictionaryWithFallback(provider: OnlineDictionary, word: string, language: string, signal: AbortSignal): Promise<OnlineDictionaryResult & { language: string }> {
+  const selected = dictionarySupports(provider, language) ? language : 'en';
+  const result = await lookupOnlineDictionary(provider, word, selected, signal);
+  if (result.senses.length || selected === 'en') return { ...result, language: selected };
+  const fallback = await lookupOnlineDictionary(provider, word, 'en', signal);
+  return { ...fallback, language: 'en' };
+}

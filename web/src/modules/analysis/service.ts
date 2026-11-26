@@ -1,38 +1,33 @@
+import { userQuotaTimeZone } from '@/lib/user-quota-timezone';
+import { quotaDayWindow } from '@/lib/quota-timezone';
+import { planFor } from '@/lib/learning-plan';
 import { createHash } from 'node:crypto';
-import { and, count, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, count, eq, isNotNull, lt, sql } from 'drizzle-orm';
 import { db } from '@/core/db';
-import { analysisUsage, subscription } from '@/config/db/schema';
-import { ANALYSIS_DAILY_LIMITS, PRO_PRODUCT_IDS, analysisDay, analysisResetAt } from '@/config/learning-plans';
+import { analysisUsage } from '@/config/db/schema';
+import { ANALYSIS_DAILY_LIMITS } from '@/config/learning-plans';
 import { getUuid } from '@/lib/hash';
 
 export class AnalysisError extends Error {
   constructor(public code: string, message: string, public status = 409, public detail?: unknown) { super(message); }
 }
-export async function planFor(userId: string, now = new Date()): Promise<'free' | 'pro'> {
-  const [paid] = await db().select({ id: subscription.id }).from(subscription).where(and(
-    eq(subscription.userId, userId), isNull(subscription.deletedAt),
-    inArray(subscription.productId, PRO_PRODUCT_IDS),
-    inArray(subscription.status, ['active', 'pending_cancel', 'trialing']),
-    gt(subscription.currentPeriodEnd, now),
-    or(isNull(subscription.currentPeriodStart), lte(subscription.currentPeriodStart, now)),
-  )).limit(1);
-  return paid ? 'pro' : 'free';
-}
-async function maintain(userId: string, now: Date) {
+export { planFor } from '@/lib/learning-plan';
+async function maintain(userId: string, now: Date, day: string) {
   await db().update(analysisUsage).set({ status: 'failed', slot: null, result: null, updatedAt: now }).where(and(eq(analysisUsage.userId, userId), eq(analysisUsage.status, 'pending'), lt(analysisUsage.createdAt, new Date(now.getTime() - 180000))));
   // Keep only the current day's result cache; accounting identifiers contain no sentence text.
-  await db().update(analysisUsage).set({ result: null }).where(and(eq(analysisUsage.userId, userId), lt(analysisUsage.day, analysisDay(now)), isNotNull(analysisUsage.result)));
+  await db().update(analysisUsage).set({ result: null }).where(and(eq(analysisUsage.userId, userId), lt(analysisUsage.day, day), isNotNull(analysisUsage.result)));
 }
 export async function quota(userId: string, now = new Date()) {
-  await maintain(userId, now);
+  const window = quotaDayWindow(now, await userQuotaTimeZone(userId));
+  await maintain(userId, now, window.day);
   const plan = await planFor(userId, now);
-  const [row] = await db().select({ used: count() }).from(analysisUsage).where(and(eq(analysisUsage.userId, userId), eq(analysisUsage.day, analysisDay(now)), isNotNull(analysisUsage.slot)));
+  const [row] = await db().select({ used: count() }).from(analysisUsage).where(and(eq(analysisUsage.userId, userId), eq(analysisUsage.day, window.day), isNotNull(analysisUsage.slot)));
   const limit = ANALYSIS_DAILY_LIMITS[plan];
-  return { plan, limit, used: Number(row.used), remaining: Math.max(0, limit - Number(row.used)), resetsAt: analysisResetAt(now) };
+  return { plan, limit, used: Number(row.used), remaining: Math.max(0, limit - Number(row.used)), resetsAt: window.end.toISOString(), day: window.day, timeZone: window.timeZone };
 }
 export async function reserve(userId: string, requestId: string, sentence: string, now = new Date()) {
   const currentQuota = await quota(userId, now);
-  const day = analysisDay(now);
+  const day = currentQuota.day;
   const sentenceHash = createHash('sha256').update(sentence).digest('hex');
   const existing = async () => {
     const [row] = await db().select().from(analysisUsage).where(and(eq(analysisUsage.userId, userId), eq(analysisUsage.requestId, requestId))).limit(1);

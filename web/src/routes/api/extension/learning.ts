@@ -1,3 +1,4 @@
+import { planFor } from '@/lib/learning-plan';
 import { createFileRoute } from '@tanstack/react-router';
 import { readLearningBody } from '@/server/learning/api';
 
@@ -5,7 +6,7 @@ import { authorizeExtension } from '@/server/learning/extension-auth';
 import * as learning from '@/modules/learning/service';
 import { learningInput } from '@/lib/learning';
 import { enforceMinIntervalRateLimit } from '@/lib/rate-limit';
-import { respData, respErr } from '@/lib/resp';
+import { respData, respErr, respJson } from '@/lib/resp';
 
 export async function handleExtensionLearning(request: Request) {
   const headers = { 'cache-control': 'private, no-store' };
@@ -25,7 +26,7 @@ export async function handleExtensionLearning(request: Request) {
     if (userLimited) return userLimited;
     if (request.method === 'GET')
       return respData(
-        { userId: access.userId, name: access.name },
+        { userId: access.userId, name: access.name, plan: await planFor(access.userId) },
         { headers }
       );
     const parsed = learningInput.safeParse(
@@ -40,6 +41,7 @@ export async function handleExtensionLearning(request: Request) {
       { headers }
     );
   } catch (error) {
+    if (error instanceof learning.LearningQuotaError) return respJson(-1, error.message, { reason: error.reason }, { status: 403, headers });
     if (
       error instanceof SyntaxError ||
       (error instanceof Error &&

@@ -21,6 +21,7 @@ export interface DictionaryHistoryEntry extends HistoryBase {
   word: string;
   // Older installations saved MDX excerpts here. They are never exported.
   definitionNote?: string;
+  dictionarySnapshots?: import("./dictionary-snapshots").DictionarySnapshot[];
   wordNet?: WordNetSense[];
   wordNetLemma?: string;
 }
@@ -198,4 +199,15 @@ function enqueueWrite(operation: () => Promise<void>): Promise<void> {
 
 function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${crypto.randomUUID()}`;
+}
+
+
+export function saveDictionarySnapshot(recordId: string, snapshot: import("./dictionary-snapshots").DictionarySnapshot, days: number): Promise<SidebarHistoryEntry[]> {
+  return writeHistory(current => current.map(entry => {
+    if (entry.type !== "dictionary" || entry.id !== recordId) return entry;
+    const dictionarySnapshots = [...(entry.dictionarySnapshots || []).filter(item => item.provider !== snapshot.provider), snapshot];
+    // Keep the complete payload below the server's 50KB analysis limit.
+    if (JSON.stringify(dictionarySnapshots).length > 48000) return entry;
+    return { ...entry, dictionarySnapshots };
+  }), days);
 }

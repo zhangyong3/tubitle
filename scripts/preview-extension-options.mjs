@@ -9,7 +9,7 @@ await cp(resolve(root,'extension/dist'),output,{recursive:true});
 await build({stdin:{contents:`
 import { DEFAULT_SETTINGS } from './extension/src/shared/settings';
 import { translateLocally, requestAnalysis } from './extension/src/local-providers';
-let stored = JSON.parse(localStorage.getItem('tubitle-preview-settings') || 'null') || {...DEFAULT_SETTINGS, uiLanguage:'zh-CN', serviceMode:'custom', provider:'edge-free'};
+let stored = JSON.parse(localStorage.getItem('tubitle-preview-settings') || 'null') || {...DEFAULT_SETTINGS, uiLanguage:'zh-CN'};
 const listeners = [];
 globalThis.chrome = {
  storage:{local:{get:async()=>({settings:stored}),set:async value=>{const oldValue=stored; stored={...stored,...value.settings};localStorage.setItem('tubitle-preview-settings',JSON.stringify(stored));for(const listener of listeners)listener({settings:{oldValue,newValue:stored}},'local');}},onChanged:{addListener:fn=>listeners.push(fn)}},

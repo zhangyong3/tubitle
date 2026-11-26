@@ -4,10 +4,6 @@ import type { TranslationProvider } from './shared/types';
 
 function language(code: string, provider: TranslationProvider) {
   if (!code) return 'auto';
-  const zh = languageFamily(code) === 'zh';
-  const traditional = /tw|hant|hk/i.test(code);
-  if (provider === 'baidu-free') return zh ? (traditional ? 'cht' : 'zh') : ({ ja: 'jp', ko: 'kor', fr: 'fra', es: 'spa', ar: 'ara', vi: 'vie' } as Record<string, string>)[languageFamily(code)] || languageFamily(code);
-  if (provider === 'deepl-free') return zh ? 'ZH' : languageFamily(code).toUpperCase();
   return providerLanguage(code, provider === 'edge-free' ? 'microsoft' : 'google');
 }
 export function keylessRequest(provider: TranslationProvider, text: string, source: string, target: string): { url: string; init: RequestInit } {
@@ -28,15 +24,6 @@ export function keylessRequest(provider: TranslationProvider, text: string, sour
   } else if (provider === 'tencent-free') {
     url = 'https://transmart.qq.com/api/imt';
     body = { header: { fn: 'auto_translation', client_key: `browser-chrome-${crypto.randomUUID()}-${Date.now()}` }, type: 'plain', model_category: 'normal', source: { text_list: [text], lang: source ? languageFamily(source) : 'auto' }, target: { lang: languageFamily(target) === 'zh' ? (/tw|hant|hk/i.test(target) ? 'zh-tw' : 'zh') : languageFamily(target) } };
-  } else if (provider === 'baidu-free') {
-    url = 'https://fanyi.baidu.com/transapi';
-    headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
-    return { url, init: { method: 'POST', headers, body: new URLSearchParams({from, to, query: text, source: 'txt'}).toString(), credentials: 'omit', redirect: 'error' } };
-  } else if (provider === 'deepl-free') {
-    url = 'https://www2.deepl.com/jsonrpc';
-    const divisor = (text.match(/i/g)?.length || 0) + 1;
-    const timestamp = Date.now();
-    body = { jsonrpc: '2.0', method: 'LMT_handle_texts', id: Math.floor(Math.random() * 1e8), params: { splitting: 'newlines', lang: { target_lang: to, source_lang_user_selected: source ? from : 'auto' }, commonJobParams: { wasSpoken: false, transcribe_as: '', ...(languageFamily(target) === 'zh' ? { regionalVariant: /tw|hant|hk/i.test(target) ? 'zh-Hant' : 'zh-Hans' } : {}) }, timestamp: timestamp + divisor - timestamp % divisor, texts: [{ text, requestAlternatives: 0 }] } };
   } else throw new Error('不支持的免 Key 翻译引擎');
   return { url, init: { method: 'POST', headers, body: JSON.stringify(body), credentials: 'omit', redirect: 'error' } };
 }
@@ -46,15 +33,6 @@ export function keylessResult(provider: TranslationProvider, data: any): string 
   if (provider === 'google-free') value = data?.sentences?.map((s: any) => typeof s.trans === 'string' ? s.trans : '').join('');
   if (provider === 'volcengine-free') value = data?.translation;
   if (provider === 'tencent-free') value = data?.auto_translation?.join('');
-  if (provider === 'baidu-free') {
-    if (data?.type === 1 && typeof data.result === 'string') {
-      try { value = Object.keys(JSON.parse(data.result)?.content?.[0]?.mean?.[0]?.cont || {})[0]; } catch { /* invalid payload is rejected below */ }
-    } else value = data?.data?.map((s: any) => s.dst || '').join('\n');
-  }
-  if (provider === 'deepl-free') {
-    value = data?.result?.texts?.[0]?.text;
-    if (typeof value === 'string' && value.startsWith("You're using an older version of DeepL.")) throw new Error('DeepL 已停止支持此客户端协议，请切换翻译引擎');
-  }
   if (typeof value !== 'string' || !value.trim() || value.length > 20000) throw new Error('翻译服务未返回有效译文，请切换引擎后重试');
   return decodeTextEntities(value.trim());
 }

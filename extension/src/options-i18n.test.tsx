@@ -43,3 +43,15 @@ describe("localized settings surface", () => {
     expect(html).toContain("Subtitle behavior");
   });
 });
+
+it("combines subtitle services with Chrome selected and removes redundant controls", () => {
+  const html = render("en", "services");
+  expect(html).not.toContain('id="service-mode"');
+  expect(html).not.toContain('permission-note');
+  expect(html).not.toContain('value="baidu-free"');
+  expect(html).not.toContain('value="deepl-free"');
+  const providers = html.match(/<select id="provider"[\s\S]*?<\/select>/)?.[0];
+  expect(providers).toContain('value="chrome-local" selected=""');
+  expect(providers).not.toContain('value="hy-mt-local"');
+  expect(html).toContain('id="analysis-service-mode"');
+});

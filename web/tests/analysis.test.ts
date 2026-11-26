@@ -37,9 +37,9 @@ test('Beijing midnight defines the daily boundary', () => {
   assert.equal(analysisDay(new Date('2026-11-16T16:00:00Z')), '2026-11-17');
   assert.equal(analysisResetAt(new Date('2026-11-16T15:59:59Z')), '2026-11-16T16:00:00.000Z');
 });
-test('concurrent requests cannot exceed three free slots', async () => {
+test('concurrent requests cannot exceed two free slots', async () => {
   const results = await Promise.allSettled(Array.from({length: 12}, (_, i) => analysis.reserve('free', `req-${i}`, 'Hello.')));
-  assert.equal(results.filter(r => r.status === 'fulfilled').length, 3);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 2);
   assert.equal((await analysis.quota('free')).remaining, 0);
   assert.ok(results.filter(r => r.status === 'rejected').every(r => r.status === 'rejected' && r.reason.code === 'QUOTA_EXHAUSTED'));
 });
@@ -59,13 +59,13 @@ test('only an active recognized Pro subscription grants 100 uses', async () => {
   const now = new Date();
   await db().insert(subscription).values(['pro', 'expired'].map(id => ({ id, userId: id, subscriptionNo: id, subscriptionId: id, paymentProvider: 'test', status: 'active', productId: 'tubitle-pro-monthly', currentPeriodEnd: new Date(now.getTime() + (id === 'pro' ? 86400000 : -86400000)) })));
   assert.equal((await analysis.quota('pro')).limit, 100);
-  assert.equal((await analysis.quota('expired')).limit, 3);
+  assert.equal((await analysis.quota('expired')).limit, 2);
   const results = await Promise.allSettled(Array.from({length: 101}, (_, i) => analysis.reserve('pro', `pro-${i}`, 'Hello.')));
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 100);
 });
 test('previous day usage does not reduce the next day quota', async () => {
   await analysis.reserve('reset', 'old', 'Hello.', new Date('2026-11-16T15:59:59Z'));
-  assert.equal((await analysis.quota('reset', new Date('2026-11-16T16:00:00Z'))).remaining, 3);
+  assert.equal((await analysis.quota('reset', new Date('2026-11-16T16:00:00Z'))).remaining, 2);
 });
 
 test('API requires login, blocks exhausted accounts, refunds provider failures and caches success', async () => {
@@ -75,7 +75,7 @@ test('API requires login, blocks exhausted accounts, refunds provider failures a
   await db().insert(user).values({ id: 'api', name: 'API QA', email: 'api@example.test' });
   const credential = await testLogin('analysis');
   const exhausted = await testLogin('exhausted');
-  await Promise.all(Array.from({length:3}, (_,i) => analysis.reserve(exhausted.userId, `exhausted-${i}`, 'Hello.')));
+  await Promise.all(Array.from({length:2}, (_,i) => analysis.reserve(exhausted.userId, `exhausted-${i}`, 'Hello.')));
   const realFetch = globalThis.fetch;
   let calls = 0;
   let fail = false;
@@ -208,4 +208,26 @@ test('stream failures, truncation and client cancellation refund once and never 
       await assert.rejects(analysis.reserve(credential.userId, requestId, 'Hello.'), { code: 'REQUEST_FAILED' });
     }
   } finally { globalThis.fetch = realFetch; }
+});
+
+test('quota windows use registration time zone and handle daylight-saving transitions', async () => {
+  const { quotaDayWindow, normalizeQuotaTimeZone } = await import('../src/lib/quota-timezone');
+  for (const [now, start, end, hours] of [
+    ['2026-03-08T20:00:00Z', '2026-03-08T08:00:00.000Z', '2026-03-09T07:00:00.000Z', 23],
+    ['2026-11-01T20:00:00Z', '2026-11-01T07:00:00.000Z', '2026-11-02T08:00:00.000Z', 25],
+  ] as const) {
+    const window = quotaDayWindow(new Date(now), 'America/Los_Angeles');
+    assert.equal(window.start.toISOString(), start);
+    assert.equal(window.end.toISOString(), end);
+    assert.equal((window.end.getTime() - window.start.getTime()) / 3600000, hours);
+  }
+  assert.equal(normalizeQuotaTimeZone('invalid/zone'), 'Asia/Shanghai');
+  await db().insert(user).values({id:'timezone-la',name:'LA',email:'timezone-la@example.test',registrationTimeZone:'America/Los_Angeles'});
+  const before = new Date('2026-11-17T07:59:59Z');
+  await analysis.reserve('timezone-la', 'local-1', 'Hello.', before);
+  await analysis.reserve('timezone-la', 'local-2', 'Hi.', before);
+  const exhausted = await analysis.quota('timezone-la', before);
+  assert.equal(exhausted.remaining, 0);
+  assert.equal(exhausted.resetsAt, '2026-11-17T08:00:00.000Z');
+  assert.equal((await analysis.quota('timezone-la', new Date('2026-11-17T08:00:00Z'))).remaining, 2);
 });

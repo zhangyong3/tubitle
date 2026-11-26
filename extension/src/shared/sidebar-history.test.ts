@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { filterRecentHistory, groupHistoryByDate, parseSidebarHistory, recordDictionaryHistory, recordAnalysisHistory, pruneSidebarHistory, deleteSidebarHistory, SIDEBAR_HISTORY_KEY, type SidebarHistoryEntry } from './sidebar-history';
+import { filterRecentHistory, groupHistoryByDate, parseSidebarHistory, saveDictionarySnapshot, recordDictionaryHistory, recordAnalysisHistory, pruneSidebarHistory, deleteSidebarHistory, SIDEBAR_HISTORY_KEY, type SidebarHistoryEntry } from './sidebar-history';
 import { getSettings, updateSettings } from './settings';
 import { historyCutoff, normalizeHistoryDays } from './history-retention';
 import { historyNavigationAction, historyVideoTarget } from './history-navigation';
@@ -95,4 +95,18 @@ describe('history playback', () => {
   it('does not invent positions for legacy entries or accept arbitrary URLs', () => {
     for (const entry of [{}, { videoId: 'abcdefghijk' }, { videoId: 'javascript:alert(1)', startMs: 0 }, { videoId: 'abcdefghijk', startMs: -1 }, { videoId: 'abcdefghijk', startMs: Infinity }]) expect(historyNavigationAction(entry, 'abcdefghijk')).toBeNull();
   });
+});
+
+it('merges dictionary results on the exact saved lookup without overwriting a newer lookup', async () => {
+ const first=await recordDictionaryHistory('actually',30,{videoId:'abcdefghijk'});
+ const id=first[0]!.id;
+ const source={provider:'youdao',name:'有道词典',language:'en',lemma:'actually',senses:[{partOfSpeech:'adv.',definitions:['实际上'],examples:[]}]};
+ await Promise.all([saveDictionarySnapshot(id,source,30),saveDictionarySnapshot(id,{...source,provider:'wordnet',name:'WordNet'},30)]);
+ const entries=parseSidebarHistory(stored[SIDEBAR_HISTORY_KEY]);
+ expect(entries[0]?.type==='dictionary' && entries[0].dictionarySnapshots).toHaveLength(2);
+ const next=await recordDictionaryHistory('actually',30);
+ await saveDictionarySnapshot(id,{...source,lemma:'stale'},30);
+ const latest=parseSidebarHistory(stored[SIDEBAR_HISTORY_KEY])[0];
+ expect(latest?.id).toBe(next[0]?.id);
+ expect(latest?.type==='dictionary' && latest.dictionarySnapshots).toBeUndefined();
 });

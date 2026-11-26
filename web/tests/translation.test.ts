@@ -433,15 +433,8 @@ test('daily subtitle quotas aggregate identities without request history, reset 
   assert.equal(rows[0].used, 100);
   for (const plan of ['free', 'pro'] as const) {
     const accountId = `test-${plan}`;
-    const limit = Number(config[`translation_${plan}_daily_limit`]);
-    for (let i = 0; i < limit; i++)
-      await consumeSubtitleQuota(accountId, plan, config, now);
-    await assert.rejects(
-      consumeSubtitleQuota(accountId, plan, config, now),
-      plan === 'free'
-        ? /今日免费双语翻译额度已耗尽，请升级为Pro开启更高额度/
-        : /Pro实时双语额度已耗尽/
-    );
+    for (let i = 0; i < 501; i++) await consumeSubtitleQuota(accountId, plan, config, now);
+    assert.equal((await db().select().from(translationQuota).where(eq(translationQuota.id, accountId))).length, 0);
   }
   await consumeSubtitleQuota(
     'tomorrow',
@@ -498,7 +491,7 @@ test('anonymous translation API allows discovery, enforces IP quota and keeps ac
   );
 });
 
-test('signed-in free daily allowance is configurable and returns the requested upgrade message', async () => {
+test('signed-in Free subtitles ignore legacy daily sentence caps', async () => {
   const { handleExtensionTranslation } =
     await import('../src/server/translation/api');
   const { testLogin } = await import('./helpers/login');
@@ -523,12 +516,7 @@ test('signed-in free daily allowance is configurable and returns the requested u
   const selection = await (await send()).json();
   const body = { ...input, expectedRevision: selection.data.revision };
   assert.equal((await send(body)).status, 200);
-  const exhausted = await send(body);
-  assert.equal(exhausted.status, 403);
-  assert.equal(
-    (await exhausted.json()).message,
-    '今日免费双语翻译额度已耗尽，请升级为Pro开启更高额度'
-  );
+  assert.equal((await send(body)).status, 200);
   await saveConfigs({ translation_free_daily_limit: '2' });
   assert.equal((await send(body)).status, 200);
 });

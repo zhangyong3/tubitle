@@ -34,6 +34,7 @@ export const user = table(
     image: text('image'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
+    registrationTimeZone: varchar('registration_time_zone', { length: 100 }).notNull().default('Asia/Shanghai'),
     utmSource: varchar('utm_source', { length: 100 }).notNull().default(''),
     ip: varchar('ip', { length: 45 }).notNull().default(''),
     locale: varchar('locale', { length: 20 }).notNull().default(''),

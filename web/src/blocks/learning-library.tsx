@@ -1,3 +1,5 @@
+import { SavedDictionaries } from './saved-dictionaries';
+import { readDictionarySnapshots } from '@/lib/dictionary-snapshots';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Download, Pause, Play, RotateCcw, Search, Trash2 } from 'lucide-react';
@@ -127,10 +129,10 @@ export function LearningLibrary() {
         <h2 lang="en">{active.text}</h2>
         {active.videoTitle && <p className="tt-study-source">{active.videoTitle}</p>}
         {active.translation && <section className="tt-study-explanation"><h3>{m['tubitle.library.meaning']()}</h3><p>{active.translation}</p></section>}
-        {active.analysis && <section className="tt-study-explanation"><h3>{m['tubitle.library.analysis']()}</h3><div>{active.analysis}</div></section>}
+        {active.analysis && !readDictionarySnapshots(active.analysis).length && <section className="tt-study-explanation"><h3>{m['tubitle.library.analysis']()}</h3><div>{active.analysis}</div></section>}
         {active.context && <section className="tt-study-explanation"><h3>{m['tubitle.library.contextLabel']()}</h3><p>{active.context}</p></section>}
         {active.note && <section className="tt-study-explanation"><h3>{m['tubitle.library.noteLabel']()}</h3><p>{active.note}</p></section>}
-        {active.kind === 'word' && <WordNetDefinition key={active.text} word={active.text} />}
+        {active.kind === 'word' && (readDictionarySnapshots(active.analysis).length ? <SavedDictionaries value={active.analysis!} /> : <WordNetDefinition key={active.text} word={active.text} />)}
         {active.kind !== 'word' && !active.translation && !active.analysis && <p className="tt-study-message">{m['tubitle.library.noExplanation']()}</p>}
       </article> : <div className="tt-study-no-selection"><BookOpen size={30} /><h2>{m['tubitle.library.selectRecord']()}</h2><p>{m['tubitle.library.emptyText']()}</p></div>}
     </section>

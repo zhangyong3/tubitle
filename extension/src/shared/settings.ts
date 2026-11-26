@@ -1,7 +1,7 @@
 import { normalizeOnlineDictionaries } from "./online-dictionaries";
 import { resolveUiLanguage } from "./ui-language";
 declare const __TUBITLE_TRANSLATION_URL__: string | undefined;
-import { serviceMode, translationProvider } from "./service-mode";
+import { serviceMode, translationProvider, TUBITLE_SUBTITLE_SERVICE_ENABLED } from "./service-mode";
 import { DEFAULT_HISTORY_RETENTION_DAYS, normalizeHistoryDays } from "./history-retention";
 import type { ExtensionSettings } from "./types";
 
@@ -10,7 +10,7 @@ export const MAX_AUTO_RETURN_SECONDS = 3600;
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   settingsVersion: 12,
   uiLanguage: resolveUiLanguage(typeof navigator === "undefined" ? "en" : navigator.language),
-  serviceMode: "tubitle",
+  serviceMode: "custom",
   analysisServiceMode: "tubitle",
   onlineDictionaries: ["wordnet"],
   enabled: true,
@@ -20,8 +20,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   excludedLanguages: ["zh"],
   hoverPause: true,
   resumeAfterHover: true,
-  autoReturnToSubtitlesSeconds: 20,
-  provider: "hy-mt-local",
+  autoReturnToSubtitlesSeconds: 10,
+  provider: "chrome-local",
   tubitleBaseUrl: typeof __TUBITLE_TRANSLATION_URL__ === "string" ? __TUBITLE_TRANSLATION_URL__ : "http://127.0.0.1:18081",
   tubitleApiKey: "",
   microsoftTranslatorKey: "",
@@ -82,16 +82,18 @@ export async function getSettings(): Promise<ExtensionSettings> {
     if (saved.subtitleAppearance?.englishFontSize === 28) legacyAppearance.englishFontSize = 19;
     if (saved.subtitleAppearance?.chineseFontSize === 22) legacyAppearance.chineseFontSize = 20;
   }
+  const requestedMode = serviceMode(saved?.serviceMode ?? DEFAULT_SETTINGS.serviceMode);
+  const subtitleMode = TUBITLE_SUBTITLE_SERVICE_ENABLED ? requestedMode : "custom";
   const settings: ExtensionSettings = {
     ...DEFAULT_SETTINGS,
     ...saved,
     tubitleBaseUrl: DEFAULT_SETTINGS.tubitleBaseUrl,
     tubitleApiKey: "",
     uiLanguage: resolveUiLanguage(saved?.uiLanguage || DEFAULT_SETTINGS.uiLanguage),
-    serviceMode: serviceMode(saved?.serviceMode),
+    serviceMode: subtitleMode,
     analysisServiceMode: serviceMode(saved?.analysisServiceMode ?? saved?.serviceMode),
     onlineDictionaries: normalizeOnlineDictionaries(saved?.onlineDictionaries),
-    provider: translationProvider(saved?.serviceMode, saved?.provider || DEFAULT_SETTINGS.provider),
+    provider: translationProvider(subtitleMode, !TUBITLE_SUBTITLE_SERVICE_ENABLED && requestedMode === "tubitle" ? "chrome-local" : saved?.provider || DEFAULT_SETTINGS.provider),
     historyRetentionDays: normalizeHistoryDays(saved?.historyRetentionDays),
     autoReturnToSubtitlesSeconds: normalizeAutoReturnSeconds(saved?.autoReturnToSubtitlesSeconds),
     offlineDictionary: { ...DEFAULT_SETTINGS.offlineDictionary, ...saved?.offlineDictionary },
@@ -114,16 +116,18 @@ export async function updateSettings(
   patch: Partial<ExtensionSettings>
 ): Promise<ExtensionSettings> {
   const current = await getSettings();
+  const requestedMode = serviceMode(patch.serviceMode ?? current.serviceMode);
+  const subtitleMode = TUBITLE_SUBTITLE_SERVICE_ENABLED ? requestedMode : "custom";
   const next = {
     ...current,
     ...patch,
     tubitleBaseUrl: DEFAULT_SETTINGS.tubitleBaseUrl,
     tubitleApiKey: "",
     uiLanguage: resolveUiLanguage(patch.uiLanguage ?? current.uiLanguage),
-    serviceMode: serviceMode(patch.serviceMode ?? current.serviceMode),
+    serviceMode: subtitleMode,
     analysisServiceMode: serviceMode(patch.analysisServiceMode ?? current.analysisServiceMode),
     onlineDictionaries: normalizeOnlineDictionaries(patch.onlineDictionaries ?? current.onlineDictionaries),
-    provider: translationProvider(patch.serviceMode ?? current.serviceMode, patch.provider ?? current.provider),
+    provider: translationProvider(subtitleMode, !TUBITLE_SUBTITLE_SERVICE_ENABLED && requestedMode === "tubitle" ? "chrome-local" : patch.provider ?? current.provider),
     historyRetentionDays: normalizeHistoryDays(patch.historyRetentionDays ?? current.historyRetentionDays),
     autoReturnToSubtitlesSeconds: normalizeAutoReturnSeconds(patch.autoReturnToSubtitlesSeconds ?? current.autoReturnToSubtitlesSeconds),
     offlineDictionary: { ...current.offlineDictionary, ...patch.offlineDictionary },

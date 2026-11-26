@@ -1,7 +1,7 @@
+import { startPanelAutoReturn } from "./shared/panel-auto-return";
 import { SubtitleToolbar } from "./subtitle-toolbar";
 import { OnlineDictionaries } from "./online-dictionaries";
-import { normalizeOnlineDictionaries, type OnlineDictionary } from "./shared/online-dictionaries";
-import { languageFamily } from "./shared/languages";
+import { dictionaryLanguage, normalizeOnlineDictionaries, type OnlineDictionary } from "./shared/online-dictionaries";
 import { HistoryDeleteButton } from "./history-delete-button";
 import { t, initializeI18n, getUiLanguage } from "./shared/i18n";
 import { useI18n } from "./shared/use-i18n";
@@ -227,9 +227,9 @@ function App() {
   transcriptRef.current = transcript;
   const [transcriptAutoFollow, setTranscriptAutoFollow] = useState(true);
   const [result, setResult] = useState<LookupResult>();
-  const [lookup, setLookup] = useState<{ word: string }>();
+  const [lookup, setLookup] = useState<{ word: string; recordId?: string }>();
   const [onlineProviders, setOnlineProviders] = useState<OnlineDictionary[]>(["wordnet"]);
-  const [lookupLanguage, setLookupLanguage] = useState(languageFamily(DEFAULT_SETTINGS.targetLanguage));
+  const [lookupLanguage, setLookupLanguage] = useState(DEFAULT_SETTINGS.targetLanguage);
   const [offlineConfigured, setOfflineConfigured] = useState(false);
   const [offlineRevision, setOfflineRevision] = useState(0);
   const wordNetController = useRef<AbortController | undefined>(undefined);
@@ -299,12 +299,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!EMBEDDED || !playing || activeTab === "subtitles" || autoReturnSeconds <= 0) return;
-    const timeout = window.setTimeout(() => {
+    return startPanelAutoReturn({
+      embedded: EMBEDDED, playing, tab: activeTab, seconds: autoReturnSeconds, analysisStatus
+    }, () => {
       setActiveTab((current) => current === activeTab ? "subtitles" : current);
-    }, autoReturnSeconds * 1000);
-    return () => window.clearTimeout(timeout);
-  }, [activeTab, autoReturnSeconds, playing, transcript?.videoId]);
+    });
+  }, [activeTab, autoReturnSeconds, playing, transcript?.videoId, activeTab === "analysis" ? analysisStatus : undefined, activeTab === "analysis" ? analysisSentence : undefined]);
 
   function stopAnalysisStream() {
     analysisController.current?.abort();
@@ -357,7 +357,7 @@ function App() {
     const controller = new AbortController();
     wordNetController.current = controller;
     setActiveTab("dictionary");
-    setLookup({ word });
+    setLookup(undefined);
     setPlaybackError("");
     setResult(undefined);
 
@@ -367,6 +367,10 @@ function App() {
       const entries = await (saveToHistory
         ? recordDictionaryHistory(word, historyRetentionDaysRef.current, { videoId: lookupSnapshot?.videoId, videoTitle: lookupSnapshot?.videoTitle, startMs: lookupSentence?.startMs ?? lookupSnapshot?.currentTimeMs, context: lookupSentence?.text })
         : getSidebarHistory()).catch(() => []);
+      if (!controller.signal.aborted) {
+        const saved = entries.find(item => item.type === "dictionary" && normalizeDictionaryWord(item.word) === normalizeDictionaryWord(word));
+        setLookup({ word, recordId: saved?.id });
+      }
       if (saveToHistory) {
         const entry = entries.find((item) => item.type === "dictionary" && normalizeDictionaryWord(item.word) === normalizeDictionaryWord(word));
         void sendMessage({ type: "LEARNING_SYNC_ENQUEUE", record: {
@@ -388,7 +392,10 @@ function App() {
     if (!lookup || !offlineConfigured) return;
     let cancelled = false;
     void lookupWord(lookup.word).then((next) => {
-      if (!cancelled) setResult(next);
+      if (!cancelled) {
+        setResult(next);
+
+      }
       else for (const url of next.audioUrls ?? []) URL.revokeObjectURL(url);
     });
     return () => { cancelled = true; };
@@ -409,7 +416,7 @@ function App() {
     ]).then(([stored, settings]) => {
       setOfflineConfigured(settings.offlineDictionary.configured);
       setOnlineProviders(settings.onlineDictionaries);
-      setLookupLanguage(languageFamily(settings.targetLanguage));
+      setLookupLanguage(settings.targetLanguage);
       setAutoReturnSeconds(settings.autoReturnToSubtitlesSeconds);
       historyRetentionDaysRef.current = settings.historyRetentionDays;
       setHistoryRetentionDays(settings.historyRetentionDays);
@@ -436,7 +443,7 @@ function App() {
         setAutoReturnSeconds(normalizeAutoReturnSeconds(next?.autoReturnToSubtitlesSeconds));
         setOfflineConfigured(Boolean(next?.offlineDictionary?.configured));
         setOnlineProviders(normalizeOnlineDictionaries(next?.onlineDictionaries));
-        setLookupLanguage(languageFamily(next?.targetLanguage ?? DEFAULT_SETTINGS.targetLanguage));
+        setLookupLanguage(next?.targetLanguage ?? DEFAULT_SETTINGS.targetLanguage);
         const nextHistoryRetentionDays = next?.historyRetentionDays ?? DEFAULT_HISTORY_RETENTION_DAYS;
         historyRetentionDaysRef.current = nextHistoryRetentionDays;
         setHistoryRetentionDays(nextHistoryRetentionDays);
@@ -639,7 +646,7 @@ function App() {
                   ) : <div className="status empty">{t("离线词典中没有找到完全匹配的词条。")}</div>}
               </section>
             )}
-            <OnlineDictionaries word={lookup.word} language={lookupLanguage} providers={onlineProviders} historyDays={historyRetentionDays} />
+            <OnlineDictionaries word={lookup.word} language={dictionaryLanguage(lookup.word, transcript?.sourceLanguage)} targetLanguage={lookupLanguage} providers={onlineProviders} historyDays={historyRetentionDays} recordId={lookup.recordId} />
             {offlineConfigured && !!result?.suggestions.length && (
               <div className="suggestions"><div className="brand">{t("相关词条")}</div>{result.suggestions.map((word) => (
                 <button type="button" key={word} onClick={() => void search(word)}>{word}</button>
@@ -718,6 +725,7 @@ function TranscriptPage({ snapshot, autoFollow, onAutoFollowChange, studyFeedbac
     setExportError("");
     setExporting(true);
     try {
+      await sendMessage({ type: "CHECK_TRANSCRIPT_PDF_ACCESS" });
       const [{ downloadTranscriptPdf }, history] = await Promise.all([import("./shared/transcript-pdf"), getSidebarHistory()]);
       await downloadTranscriptPdf(snapshot.videoTitle, buildTranscriptNotes(snapshot, history));
     } catch (error) {

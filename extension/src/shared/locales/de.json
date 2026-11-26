@@ -41,7 +41,7 @@
   "字幕翻译与 AI 语句分析": "Untertitelübersetzung und KI-Satzanalyse",
   "使用 Tubitle 服务（默认）": "Tubitle-Dienste verwenden (Standard)",
   "使用自己的 API Key": "Eigenen API-Schlüssel verwenden",
-  "由 Tubitle 提供字幕翻译与 AI 语句分析，均需登录。AI 解析免费版每天 3 次，Pro 每天 100 次。": "Für Tubitle-Untertitelübersetzung und KI-Satzanalyse ist eine Anmeldung erforderlich. KI-Analyse: 3-mal täglich kostenlos, 100-mal mit Pro.",
+  "由 Tubitle 提供字幕翻译与 AI 语句分析，均需登录。AI 解析免费版每天 2 次，Pro 每天 100 次。": "Für Tubitle-Untertitelübersetzung und KI-Satzanalyse ist eine Anmeldung erforderlich. KI-Analyse: 2-mal täglich kostenlos, 100-mal mit Pro.",
   "字幕与句子直接发送到你选择的服务商，费用由服务商收取，不消耗 Tubitle 额度。登录后学习记录仍会自动同步。": "Texte gehen direkt an den gewählten Anbieter. Dessen Gebühren gelten; das Tubitle-Kontingent bleibt unberührt. Lernaufzeichnungen werden nach Anmeldung weiterhin synchronisiert.",
   "字幕翻译 API": "API für Untertitelübersetzung",
   "翻译服务商": "Übersetzungsanbieter",
@@ -79,7 +79,7 @@
   "最多保存天数": "Aufbewahrung in Tagen",
   "按本地日期保留最近 1–365 天（含今天）的查词、翻译和分析记录，默认 30 天。过期记录自动清理；不影响已上传的网页记录。": "Wortabfragen, Übersetzungen und Analysen für 1–365 lokale Kalendertage einschließlich heute aufbewahren (Standard: 30). Ältere Einträge werden automatisch entfernt; hochgeladene Webdaten bleiben erhalten.",
   "关于 Tubitle": "Über Tubitle",
-  "默认使用 Tubitle 服务，无需填写 API Key。自备 API 的密钥仅保存在本机浏览器，不会上传到 Tubitle。": "Tubitle-Dienste benötigen standardmäßig keinen API-Schlüssel. Eigene Schlüssel bleiben nur in diesem Browser und werden nie an Tubitle hochgeladen.",
+  "默认使用 Chrome Translator，无需填写 API Key。自备 API 的密钥仅保存在本机浏览器，不会上传到 Tubitle。": "Chrome Translator-Dienste benötigen standardmäßig keinen API-Schlüssel. Eigene Schlüssel bleiben nur in diesem Browser und werden nie an Tubitle hochgeladen.",
   "所有设置自动保存，并立即应用到已打开的学习面板与字幕。": "Alle Einstellungen werden automatisch gespeichert und sofort auf geöffnete Lernbereiche und Untertitel angewendet.",
   "格式示例：Alt+ArrowLeft、Alt+R、Ctrl+Shift+A。若与系统或浏览器快捷键冲突，请在此修改。": "Beispiele: Alt+ArrowLeft, Alt+R, Ctrl+Shift+A. Bei Konflikten mit System oder Browser hier ändern.",
   "正在读取设置…": "Einstellungen werden gelesen…",
@@ -274,7 +274,7 @@
   "AI 语句分析服务": "AI sentence analysis service",
   "Tubitle 服务（有配额限制）": "Tubitle service (quota applies)",
   "自己的大模型 API（不受 Tubitle 配额限制）": "Your own AI API (no Tubitle quota)",
-  "AI 解析需登录，免费版每天 3 次，Pro 每天 100 次。": "Sign in to use Tubitle AI analysis: 3 requests per day on Free and 100 on Pro.",
+  "AI 解析需登录，免费版每天 2 次，Pro 每天 100 次。": "Sign in to use Tubitle AI analysis: 2 requests per day on Free and 100 on Pro.",
   "不消耗 Tubitle 额度，费用与使用限额由你的 API 提供方决定。": "No Tubitle quota is used. Charges and limits are set by your API provider.",
   "语言包下载进度：{0}%": "Language pack download: {0}%",
   "实验入口": "Experimental",
@@ -325,5 +325,10 @@
   "当前：{0}；点击切换为：{1}": "Current: {0}; click to switch to: {1}",
   "关闭自动跟随": "Turn off auto-follow",
   "开启自动跟随": "Turn on auto-follow",
-  "播放时自动返回字幕面板（默认20秒，填0关闭）。": "Während der Wiedergabe automatisch zum Untertitelbereich zurückkehren (Standard: 20 Sekunden, 0 zum Deaktivieren)."
+  "播放时自动返回字幕面板（默认10秒，填0关闭）。": "Während der Wiedergabe automatisch zum Untertitelbereich zurückkehren (Standard: 10 Sekunden, 0 zum Deaktivieren).",
+  "请点击重试以下载 Chrome 翻译语言包": "Klicken Sie auf Erneut versuchen, um das Chrome-Übersetzungssprachpaket herunterzuladen.",
+  "请先登录 Tubitle 后下载旁批 PDF": "Sign in to Tubitle to download annotated transcript PDFs.",
+  "旁批 PDF 下载为 Pro 功能，请升级后使用": "Annotated transcript PDF downloads require Pro. Please upgrade to continue.",
+  "免费版每天可新增 5 条学习库记录，请明日再试或升级 Pro": "Free accounts can add 5 library records per day. Try tomorrow or upgrade to Pro.",
+  "免费版学习库最多保留 100 条记录，请删除部分记录或升级 Pro": "Free accounts can keep up to 100 library records. Delete some records or upgrade to Pro."
 }

@@ -25,7 +25,6 @@ export function Pricing() {
         m['tubitle.pricing.pro1'](),
         m['tubitle.pricing.pro2'](),
         m['tubitle.pricing.pro3'](),
-        m['tubitle.pricing.pro4'](),
       ],
       cta: m['tubitle.pricing.proCta'](),
     },

@@ -228,3 +228,81 @@ it('starts fresh account discovery after login while an anonymous discovery is s
   expect((await fresh).userId).toBe('alice');
   expect((await duplicate).userId).toBe('alice');
 });
+
+it('keeps enriched dictionary payloads queued when an older upload finishes', async () => {
+  account = { userId: 'alice', name: 'Alice' };
+  const sync = await import('./learning-sync');
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const base = request.getMockImplementation()!;
+  const uploads: string[] = [];
+  request.mockImplementation(async (url, init) => {
+    if (init?.method === 'POST') {
+      uploads.push(String(init.body));
+      if (uploads.length === 1) await blocked;
+    }
+    return base(url, init);
+  });
+  await sync.enqueueLearning(record);
+  await vi.waitFor(() => expect(uploads).toHaveLength(1));
+  await sync.enqueueLearning({ ...record, analysis: 'saved dictionary content' });
+  release();
+  await sync.flushLearning();
+  expect(uploads).toHaveLength(2);
+  expect(JSON.parse(uploads[1]!).analysis).toBe('saved dictionary content');
+  expect((await sync.syncStatus()).pending).toBe(0);
+});
+
+for (const queued of [false, true]) {
+  it(`omits offline dictionary content from ${queued ? 'previously persisted' : 'new'} uploads while preserving online results`, async () => {
+    account = { userId: 'alice', name: 'Alice' };
+    const { DICTIONARY_SNAPSHOT_PREFIX } = await import('./shared/learning-sync');
+    const online = { provider: 'youdao', senses: [{ definitions: ['online definition'] }] };
+    const mixed = { ...record, analysis: DICTIONARY_SNAPSHOT_PREFIX + JSON.stringify([
+      { provider: 'offline', senses: [{ definitions: ['private offline definition'] }] }, online,
+    ]) };
+    if (queued) stored[SYNC_STATE_KEY] = { account, queue: [mixed] };
+    const sync = await import('./learning-sync');
+    if (!queued) await sync.enqueueLearning(mixed);
+    await sync.flushLearning();
+    const uploads = request.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(uploads).toHaveLength(1);
+    const uploaded = JSON.parse(uploads[0]![1]!.body as string);
+    expect(uploaded.analysis).toBe(DICTIONARY_SNAPSHOT_PREFIX + JSON.stringify([online]));
+    expect(uploaded.text).toBe(record.text);
+    expect(JSON.stringify(uploaded)).not.toContain('private offline definition');
+    expect((stored[SYNC_STATE_KEY] as { queue: unknown[] }).queue).toEqual([]);
+  });
+}
+
+it('uploads the word record without definitions when an old queue contains only offline dictionary data', async () => {
+  account = { userId: 'alice', name: 'Alice' };
+  const { DICTIONARY_SNAPSHOT_PREFIX } = await import('./shared/learning-sync');
+  stored[SYNC_STATE_KEY] = { account, queue: [{ ...record, analysis: DICTIONARY_SNAPSHOT_PREFIX + JSON.stringify([{ provider: 'offline', senses: [{ definitions: ['private offline definition'] }] }]) }] };
+  const sync = await import('./learning-sync');
+  await sync.flushLearning();
+  const uploaded = JSON.parse(request.mock.calls.find(([, init]) => init?.method === 'POST')![1]!.body as string);
+  expect(uploaded.text).toBe(record.text);
+  expect(uploaded.analysis).toBeUndefined();
+  expect(JSON.stringify(uploaded)).not.toContain('private offline definition');
+});
+
+it('requires a currently verified Pro account for annotated transcript PDF downloads', async () => {
+  const sync = await import('./learning-sync');
+  await expect(sync.requireTranscriptPdfAccess()).rejects.toThrow('登录');
+  account = { userId: 'alice', name: 'Alice' };
+  await expect(sync.requireTranscriptPdfAccess()).rejects.toThrow('Pro');
+  request.mockImplementation(async () => ok({ ...account, plan: 'pro' }));
+  await expect(sync.requireTranscriptPdfAccess()).resolves.toBeUndefined();
+  request.mockImplementation(async () => ok({ ...account, plan: 'free' }));
+  await expect(sync.requireTranscriptPdfAccess()).rejects.toThrow('Pro');
+});
+
+it('shows library quota messages and retains the unsynced record for a later retry', async () => {
+  account = { userId: 'alice', name: 'Alice' };
+  request.mockImplementation(async (_url, init) => init?.method === 'GET' ? ok(account) : Response.json({code: -1, message: '免费版每天可新增 5 条学习库记录，请明日再试或升级 Pro'}, {status: 403}));
+  const sync = await import('./learning-sync');
+  await sync.enqueueLearning(record);
+  await sync.flushLearning();
+  expect(await sync.syncStatus()).toMatchObject({pending: 1, error: '免费版每天可新增 5 条学习库记录，请明日再试或升级 Pro'});
+});

@@ -3,6 +3,11 @@ import { DEFAULT_SETTINGS } from "./shared/settings";
 import { requestSubtitleTranslation } from "./shared/subtitle-translation";
 import type { ExtensionMessage, MessageResponse } from "./shared/types";
 
+// Keep coverage of the retained Tubitle implementation while its public entry is closed.
+vi.mock('./shared/service-mode', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./shared/service-mode')>(), TUBITLE_SUBTITLE_SERVICE_ENABLED: true,
+}));
+
 const platform = vi.hoisted(() => ({ discover: vi.fn(), translate: vi.fn() }));
 
 vi.mock("./learning-sync", () => ({
@@ -26,9 +31,11 @@ describe("subtitle translation from the extension background", () => {
   let send: (message: ExtensionMessage, sender?: unknown) => Promise<MessageResponse>;
   const request = vi.fn<typeof fetch>();
   let mode: "custom" | "tubitle";
+  let targetLanguage: string;
 
   beforeEach(async () => {
     mode = "custom";
+    targetLanguage = "zh";
     cache.rows.clear();
     cache.read.mockReset().mockImplementation(async (key: string) => cache.rows.get(key));
     cache.write.mockReset().mockImplementation(async (key: string, value: string) => { cache.rows.set(key, value); });
@@ -72,7 +79,7 @@ describe("subtitle translation from the extension background", () => {
           };
         }
       },
-      storage: { onChanged: { addListener() {} }, local: { get: async () => ({ settings: { ...DEFAULT_SETTINGS, serviceMode: mode, provider: mode === "tubitle" ? "hy-mt-local" : "microsoft", microsoftTranslatorKey: "test-key" } }) } }
+      storage: { onChanged: { addListener() {} }, local: { get: async () => ({ settings: { ...DEFAULT_SETTINGS, targetLanguage, serviceMode: mode, provider: mode === "tubitle" ? "hy-mt-local" : "microsoft", microsoftTranslatorKey: "test-key" } }) } }
     });
     await import("./background");
   });
@@ -84,6 +91,18 @@ describe("subtitle translation from the extension background", () => {
 
   const subtitle = (text: string, priority: "current" | "prefetch" = "prefetch") =>
     send({ type: "TRANSLATE", provider: "microsoft", text, sourceLanguage: "en", priority });
+
+  it("translates dictionary definitions even when their language is excluded from subtitle translation", async () => {
+    mode = "custom";
+    targetLanguage = "ja";
+    const skipped = await send({ type: "TRANSLATE", provider: "microsoft", text: "学习", sourceLanguage: "zh" });
+    expect(skipped).toMatchObject({ ok: true, data: "" });
+    expect(await requestSubtitleTranslation({ type: "TRANSLATE", provider: "microsoft", text: "学习", sourceLanguage: "zh", purpose: "dictionary" }, new AbortController().signal)).toBe("译文");
+    const translated = await send({ type: "TRANSLATE", provider: "microsoft", text: "学习", sourceLanguage: "zh", purpose: "dictionary" });
+    expect(translated.ok).toBe(true);
+    expect(translated).toMatchObject({ ok: true, data: "译文" });
+    expect(new URL(String(request.mock.calls[0]![0])).searchParams.get("to")).toBe("ja");
+  });
 
   it("restricts sync messages to internal pages", async () => {
     const contentSender = { id: "qa-extension", url: "https://www.youtube.com/watch?v=abcdefghijk" };

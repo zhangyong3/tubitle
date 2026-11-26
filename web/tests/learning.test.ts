@@ -26,7 +26,7 @@ execFileSync(
   { stdio: 'pipe', env: process.env }
 );
 const { db } = await import('../src/core/db');
-const { user } = await import('../src/config/db/schema');
+const { user, subscription, learningRecord } = await import('../src/config/db/schema');
 const learning = await import('../src/modules/learning/service');
 const { learningInput, videoLink } =
   await import('../src/lib/learning');
@@ -38,6 +38,8 @@ await db()
     { id: 'alice', name: 'Alice', email: 'alice@example.test' },
     { id: 'bob', name: 'Bob', email: 'bob@example.test' },
   ]);
+// Existing ownership/search tests use a paid account; dedicated tests below cover Free limits.
+await db().insert(subscription).values({ id: 'alice-plan', userId: 'alice', subscriptionNo: 'alice-plan', subscriptionId: 'alice-plan', paymentProvider: 'test', status: 'active', productId: 'tubitle-pro-monthly', currentPeriodEnd: new Date(Date.now() + 86400000) });
 after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
@@ -300,4 +302,111 @@ test('library can refresh four loaded pages in a burst and still limits sustaine
     Date.now = realNow;
     globalThis.__minIntervalRateLimitStore = new Map();
   }
+});
+
+test('enriches an existing word with saved dictionary content without duplicating or replacing notes', async () => {
+  const { DICTIONARY_SNAPSHOT_PREFIX, readDictionarySnapshots } = await import('../src/lib/dictionary-snapshots');
+  const word = { ...input, clientRecordId: 'saved-dictionary-regression', kind: 'word' as const, text: 'actually', note: 'my note' };
+  const original = await learning.create('alice', word);
+  const analysis = DICTIONARY_SNAPSHOT_PREFIX + JSON.stringify([{provider:'youdao',name:'有道词典',language:'en',lemma:'actually',senses:[{partOfSpeech:'adv.',definitions:['实际上'],examples:['It actually works.']}]}]);
+  const enriched = await learning.create('alice', {...word, note:'',analysis});
+  assert.equal(enriched.id, original.id);
+  assert.equal(enriched.note, 'my note');
+  assert.equal(readDictionarySnapshots(enriched.analysis)[0]?.senses[0]?.definitions[0], '实际上');
+  await learning.create('alice', {...word,analysis:''});
+  assert.equal((await learning.list('alice', { search: 'actually' })).items.find((item: {id:string}) => item.id === original.id)?.analysis, analysis);
+});
+
+test('renders saved dictionary definitions as text and rejects malformed snapshots', async () => {
+  const React = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { SavedDictionaries } = await import('../src/blocks/saved-dictionaries');
+  const { DICTIONARY_SNAPSHOT_PREFIX, readDictionarySnapshots } = await import('../src/lib/dictionary-snapshots');
+  const value = DICTIONARY_SNAPSHOT_PREFIX + JSON.stringify([{provider:'youdao',name:'有道词典',language:'en',lemma:'actually',senses:[{partOfSpeech:'adv.',definitions:['实际上 <script>alert(1)</script>'],examples:[]}]}]);
+  const html = renderToStaticMarkup(React.createElement(SavedDictionaries, { value }));
+  assert.ok(html.includes('有道词典'));
+  assert.ok(html.includes('实际上 &lt;script&gt;'));
+  assert.ok(!html.includes('<script>'));
+  assert.deepEqual(readDictionarySnapshots(DICTIONARY_SNAPSHOT_PREFIX + '{bad'), []);
+  assert.deepEqual(readDictionarySnapshots(DICTIONARY_SNAPSHOT_PREFIX + '[{"provider":"unknown"}]'), []);
+});
+
+test('Free admits five concurrent additions, permits retries at the cap and does not refund deleted daily additions', async () => {
+  const userId = 'free-daily';
+  await db().insert(user).values({ id: userId, name: userId, email: `${userId}@example.test` });
+  const attempts = await Promise.allSettled(Array.from({length: 12}, (_, i) => learning.create(userId, { ...input, clientRecordId: `daily-${i}` })));
+  const saved = attempts.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+  assert.equal(saved.length, 5);
+  assert.equal((await learning.list(userId)).total, 5);
+  assert.ok(attempts.filter(r => r.status === 'rejected').every(r => r.status === 'rejected' && r.reason.reason === 'LEARNING_DAILY_LIMIT'));
+  assert.equal((await learning.create(userId, { ...input, clientRecordId: saved[0].clientRecordId })).id, saved[0].id);
+  await learning.remove(userId, saved[0].id);
+  await assert.rejects(learning.create(userId, { ...input, clientRecordId: 'after-delete' }), { reason: 'LEARNING_DAILY_LIMIT' });
+  assert.equal((await learning.list(userId)).total, 4);
+  assert.equal(await learning.create(userId, { ...input, clientRecordId: saved[0].clientRecordId }, true), null);
+});
+
+test('Free caps active records at 100, releases storage on deletion and ignores yesterday for daily additions', async () => {
+  const userId = 'free-total';
+  await db().insert(user).values({ id: userId, name: userId, email: `${userId}@example.test` });
+  const yesterday = new Date(Date.now() - 86400000);
+  for (let i = 0; i < 100; i++) await db().insert(learningRecord).values({ ...learningInput.parse(input), id: `total-${i}`, userId, clientRecordId: `total-${i}`, createdAt: yesterday, updatedAt: yesterday, status: 'new' });
+  await assert.rejects(learning.create(userId, { ...input, clientRecordId: 'total-over' }), { reason: 'LEARNING_TOTAL_LIMIT' });
+  assert.equal((await learning.list(userId)).total, 100);
+  await learning.remove(userId, 'total-0');
+  await learning.create(userId, { ...input, clientRecordId: 'total-after-delete' });
+  assert.equal((await learning.list(userId)).total, 100);
+});
+
+test('Pro has no daily or total record cap and expired Pro uses Free limits', async () => {
+  for (const userId of ['library-pro', 'library-expired']) {
+    await db().insert(user).values({ id: userId, name: userId, email: `${userId}@example.test` });
+    await db().insert(subscription).values({ id: userId, userId, subscriptionNo: userId, subscriptionId: userId, paymentProvider: 'test', status: 'active', productId: 'tubitle-pro-monthly', currentPeriodEnd: new Date(Date.now() + (userId === 'library-pro' ? 86400000 : -86400000)) });
+  }
+  for (let i = 0; i < 105; i++) await learning.create('library-pro', { ...input, clientRecordId: `pro-${i}` });
+  assert.equal((await learning.list('library-pro')).total, 105);
+  for (let i = 0; i < 5; i++) await learning.create('library-expired', { ...input, clientRecordId: `expired-${i}` });
+  await assert.rejects(learning.create('library-expired', { ...input, clientRecordId: 'expired-over' }), { reason: 'LEARNING_DAILY_LIMIT' });
+});
+
+test('extension discovery exposes plan and a sixth Free upload gets an actionable quota response', async () => {
+  const { testLogin } = await import('./helpers/login');
+  const { handleExtensionLearning } = await import('../src/routes/api/extension/learning');
+  const login = await testLogin('free-upload-cap');
+  const request = (body?: unknown) => {
+    globalThis.__minIntervalRateLimitStore = new Map();
+    return new Request('http://localhost:3000/api/extension/learning', { method: body ? 'POST' : 'GET', headers: {
+      cookie: login.cookie, origin: 'chrome-extension://' + 'a'.repeat(32), 'x-tubitle-extension': '1', 'x-tubitle-account': login.userId, 'content-type': 'application/json',
+    }, ...(body ? {body: JSON.stringify(body)} : {}) });
+  };
+  assert.equal((await (await handleExtensionLearning(request())).json()).data.plan, 'free');
+  for (let i = 0; i < 5; i++) assert.equal((await handleExtensionLearning(request({...input, clientRecordId: `upload-${i}`}))).status, 200);
+  const blocked = await handleExtensionLearning(request({...input, clientRecordId: 'upload-over'}));
+  assert.equal(blocked.status, 403);
+  assert.equal((await blocked.json()).data.reason, 'LEARNING_DAILY_LIMIT');
+});
+
+test('registration captures a validated browser time zone and refuses later profile edits to it', async () => {
+  const { getAuth } = await import('../src/core/auth');
+  const { eq } = await import('drizzle-orm');
+  const response = await getAuth().api.signUpEmail({
+    body: { name: 'Timezone', email: `timezone-${crypto.randomUUID()}@example.test`, password: 'Isolated-qa-password-123!' },
+    headers: new Headers({cookie:'tubitle_registration_timezone=America%2FLos_Angeles'}), asResponse:true,
+  });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  const cookie = response.headers.getSetCookie().map((value: string) => value.split(';')[0]).join('; ');
+  const read = async () => (await db().select({zone:user.registrationTimeZone}).from(user).where(eq(user.id,payload.user.id)))[0].zone;
+  assert.equal(await read(), 'America/Los_Angeles');
+  await assert.rejects(getAuth().api.updateUser({headers:new Headers({cookie}),body:{name:'Still same zone', registrationTimeZone:'Asia/Tokyo'} as any}), /not allowed/);
+  assert.equal(await read(), 'America/Los_Angeles');
+});
+
+test('learning additions count the registration-local day rather than the server day', async () => {
+  const { quotaDayWindow } = await import('../src/lib/quota-timezone');
+  const userId='library-timezone';
+  await db().insert(user).values({id:userId,name:userId,email:`${userId}@example.test`,registrationTimeZone:'Pacific/Honolulu'});
+  const {start} = quotaDayWindow(new Date(), 'Pacific/Honolulu');
+  for(let i=0;i<5;i++) await db().insert(learningRecord).values({...learningInput.parse(input),id:`local-${i}`,userId,clientRecordId:`local-${i}`,createdAt:new Date(start.getTime()+1),updatedAt:new Date(),status:'new'});
+  await assert.rejects(learning.create(userId,{...input,clientRecordId:'local-over'}),{reason:'LEARNING_DAILY_LIMIT'});
 });

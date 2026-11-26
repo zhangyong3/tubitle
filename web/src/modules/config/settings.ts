@@ -292,7 +292,7 @@ export function getSettingGroups(): SettingGroup[] {
 
 export function getSettings(): Setting[] {
   return [
-    ...(['guest', 'free', 'pro'] as const).map((plan) => ({
+    ...(['guest'] as const).map((plan) => ({
       name: `translation_${plan}_daily_limit`,
       title: {
         guest: '匿名用户每日字幕句数（按 IP）',

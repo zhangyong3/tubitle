@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { dictionaryLanguage, dictionarySupports, normalizeOnlineDictionaries, parseYoudao, lookupOnlineDictionary } from './online-dictionaries';
+import { dictionaryLanguage, dictionarySupports, normalizeOnlineDictionaries, parseYoudao, lookupOnlineDictionary, lookupDictionaryWithFallback } from './online-dictionaries';
 import { dictionaryTokens, normalizeDictionaryText } from './dictionary-lookup';
 afterEach(()=>vi.unstubAllGlobals());
 it('preserves empty multi-selection and migrates absent settings to WordNet',()=>{
@@ -60,4 +60,19 @@ it('uses a bodyless Youdao GET so Chrome does not add a POST Origin rejected by 
  expect(init?.method ?? 'GET').toBe('GET');
  expect(init?.body).toBeUndefined();
  expect(init?.credentials).toBe('omit');
+});
+
+it('falls back from empty Chinese Youdao results to its English dictionary', async () => {
+ let calls=0;
+ const fetch=vi.fn(async ()=>Response.json(++calls === 1 ? {} : {ec:{word:{trs:[{tran:'实际上'}]}}}));
+ vi.stubGlobal('fetch',fetch);
+ const result=await lookupDictionaryWithFallback('youdao','actually-fallback-regression','zh',new AbortController().signal);
+ expect(result.language).toBe('en');expect(result.senses[0]?.definitions).toEqual(['实际上']);
+ expect(fetch).toHaveBeenCalledTimes(2);
+});
+it('uses English WordNet when the selected language is unsupported', async () => {
+ const fetch=vi.fn(async()=>Response.json([{partOfSpeech:'n',definition:['an alternative'],example:[]}]));
+ vi.stubGlobal('fetch',fetch);
+ const result=await lookupDictionaryWithFallback('wordnet','fallback-regression','zh',new AbortController().signal);
+ expect(result.language).toBe('en');expect(fetch).toHaveBeenCalledOnce();
 });

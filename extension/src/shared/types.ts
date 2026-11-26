@@ -1,4 +1,4 @@
-export type TranslationProvider = "microsoft" | "google" | "tencent" | "hy-mt-local" | "edge-free" | "google-free" | "volcengine-free" | "tencent-free" | "baidu-free" | "deepl-free" | "chrome-local";
+export type TranslationProvider = "microsoft" | "google" | "tencent" | "hy-mt-local" | "edge-free" | "google-free" | "volcengine-free" | "tencent-free" | "chrome-local";
 
 export interface ShortcutSettings {
   previous: string;
@@ -140,10 +140,11 @@ export interface SentenceAnalysis {
 export type ExtensionMessage =
   | { type: "LEARNING_ACTIVITY"; activity: import("./learning-activity").LearningActivity }
   | { type: "LEARNING_SYNC_STATUS" }
+  | { type: "CHECK_TRANSCRIPT_PDF_ACCESS" }
   | { type: "LEARNING_SYNC_ENQUEUE"; record: import("./learning-sync").SyncRecord }
   | { type: "GET_SETTINGS" }
   | { type: "UPDATE_SETTINGS"; settings: Partial<ExtensionSettings> }
-  | { type: "TRANSLATE"; text: string; sourceLanguage?: string; provider: TranslationProvider; priority?: "current" | "prefetch" }
+  | { type: "TRANSLATE"; text: string; sourceLanguage?: string; provider: TranslationProvider; priority?: "current" | "prefetch"; purpose?: "dictionary" }
   | { type: "TEST_PROVIDER"; provider: TranslationProvider | "llm" }
   | { type: "OPEN_ANALYSIS"; sentence: string };
 

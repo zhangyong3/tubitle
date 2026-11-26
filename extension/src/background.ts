@@ -1,6 +1,6 @@
 import { readAnalysisResponse } from "./shared/read-analysis";
 import { requestSentenceAnalysis } from "./analysis-provider";
-import { AnalysisAccessError, recordLearningActivity, enqueueLearning, flushLearning, syncStatus, getAccountTranslationSelection, requestAccountTranslation, type AccountTranslationSelection } from "./learning-sync";
+import { requireTranscriptPdfAccess, AnalysisAccessError, recordLearningActivity, enqueueLearning, flushLearning, syncStatus, getAccountTranslationSelection, requestAccountTranslation, type AccountTranslationSelection } from "./learning-sync";
 import { pruneSidebarHistory } from "./shared/sidebar-history";
 import { SYNC_ALARM } from "./shared/learning-sync";
 import { sourceLanguage, shouldSkipTranslation } from "./shared/languages";
@@ -183,12 +183,12 @@ async function runTranslation(job: TranslationJob): Promise<string> {
   throw new Error("翻译请求失败");
 }
 
-async function enqueueTranslation(text: string, provider: TranslationProvider, priority: "current" | "prefetch" = "prefetch", trackLanguage = "", signal?: AbortSignal): Promise<string> {
+async function enqueueTranslation(text: string, provider: TranslationProvider, priority: "current" | "prefetch" = "prefetch", trackLanguage = "", signal?: AbortSignal, purpose?: "dictionary"): Promise<string> {
   const settings = await getSettings();
   provider = settings.provider;
   signal?.throwIfAborted();
   const source = sourceLanguage(text, trackLanguage);
-  if (shouldSkipTranslation(source, settings)) return "";
+  if (purpose !== "dictionary" && shouldSkipTranslation(source, settings)) return "";
   const accountSelection = settings.serviceMode === "tubitle" ? await getAccountTranslationSelection() : undefined;
   const expectedModel = !accountSelection && provider === "hy-mt-local" ? await getTubitleModel(settings) : undefined;
   signal?.throwIfAborted();
@@ -293,11 +293,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
       }
       switch (message.type) {
         case "LEARNING_ACTIVITY": await recordLearningActivity(message.activity); sendResponse({ ok: true, data: null }); break;
+        case "CHECK_TRANSCRIPT_PDF_ACCESS": await requireTranscriptPdfAccess(); sendResponse({ ok: true, data: null }); break;
         case "LEARNING_SYNC_STATUS": sendResponse({ ok: true, data: await syncStatus() }); break;
         case "LEARNING_SYNC_ENQUEUE": await enqueueLearning(message.record); sendResponse({ ok: true, data: null }); break;
         case "GET_SETTINGS": sendResponse({ ok: true, data: await getSettings() }); break;
         case "UPDATE_SETTINGS": sendResponse({ ok: true, data: await updateSettings(message.settings) }); break;
-        case "TRANSLATE": sendResponse({ ok: true, data: await enqueueTranslation(message.text, message.provider, message.priority, message.sourceLanguage) }); break;
+        case "TRANSLATE": sendResponse({ ok: true, data: await enqueueTranslation(message.text, message.provider, message.priority, message.sourceLanguage, undefined, message.purpose) }); break;
         case "TEST_PROVIDER": {
           const settings = await getSettings();
           if (message.provider === "llm") {
@@ -337,7 +338,7 @@ chrome.runtime.onConnect.addListener((port) => {
     port.onMessage.addListener((message: SubtitleTranslationRequest) => {
       if (started || message.type !== "TRANSLATE") return;
       started = true;
-      void enqueueTranslation(message.text, message.provider, message.priority, message.sourceLanguage, controller.signal)
+      void enqueueTranslation(message.text, message.provider, message.priority, message.sourceLanguage, controller.signal, message.purpose)
         .then((data) => reply({ ok: true, data }), (error: unknown) => reply({ ok: false, error: errorMessage(error), ...translationErrorDetails(error) }));
     });
     return;

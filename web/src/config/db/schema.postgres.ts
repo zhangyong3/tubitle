@@ -33,6 +33,7 @@ export const user = table(
       .defaultNow()
       .$onUpdate(() => new Date())
       .notNull(),
+    registrationTimeZone: text('registration_time_zone').notNull().default('Asia/Shanghai'),
     utmSource: text('utm_source').notNull().default(''),
     ip: text('ip').notNull().default(''),
     locale: text('locale').notNull().default(''),
