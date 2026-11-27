@@ -101,3 +101,9 @@ AI 语句分析使用 SSE 流式输出，收到正文后立即显示。连接中
 选择「使用自己的 API Key」后才显示 Microsoft / Google 翻译配置，以及 OpenAI 兼容大模型的接口地址、密钥和模型。自备 API 请求从插件直接发送到服务商，不要求 Tubitle 登录，不消耗 Tubitle 额度；费用由用户的 API 账户承担。个人密钥只存在本机，切回平台模式仍保留配置但不再使用。两种模式在登录后都会自动上传学习记录。
 
 开发者发行时设置 `TUBITLE_SITE_URL=https://your-domain.example`，构建会写入网站地址及对应访问权限。平台翻译通过该网站的 `/api/extension/translation`，供应商地址和密钥从 Web 后台管理，切换无需重发插件。旧的 `TUBITLE_TRANSLATION_URL` 不再用于平台模式。更多配置和 Cloudflare 部署边界见 [Web 说明](web/README.md#platform-subtitle-translation)。
+
+### Pro 会员与支付
+
+Pro 定价为每月 USD 3.50，会员中心入口为 `/settings/membership`。Waffo 开通后在后台“设置 → 支付 → Waffo Pancake”填写商户、店铺、商品和签名私钥，先通过只读连接测试与测试支付，再开启收款；未开通时保留免费使用。
+
+发起付款时，服务端会向 Waffo 发送账户内部 ID、邮箱、商品及订单标识以关联订阅；付款信息在 Waffo 托管收银台输入。签名私钥仅供服务端使用，后台脱敏返回，设置 `CONFIG_ENCRYPTION_KEY` 后加密保存。配置步骤、回调事件和未联调边界见 [会员与 Waffo 配置](docs/membership-waffo.md)。
