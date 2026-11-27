@@ -20,6 +20,10 @@ import {
   WechatPayProvider,
 } from '@/core/payment';
 import { PaymentType, type PaymentOrder } from '@/core/payment/types';
+import {
+  waffoCredentialsConfigured,
+  WaffoProvider,
+} from '@/core/payment/waffo';
 import { R2Provider } from '@/core/storage/r2';
 import { envConfigs } from '@/config';
 import { getUniSeq } from '@/lib/hash';
@@ -36,6 +40,21 @@ export async function runTest(
 ): Promise<TestResult> {
   try {
     switch (group) {
+      case 'waffo': {
+        if (!waffoCredentialsConfigured(configs))
+          return {
+            success: false,
+            message:
+              'Complete Waffo merchant, store, private key, environment and Pro product settings first.',
+          };
+        await new WaffoProvider(configs).checkProduct();
+        return {
+          success: true,
+          message:
+            'Waffo credentials and USD 3.50 monthly product verified. No checkout or charge was created.',
+          details: { environment: configs.waffo_environment },
+        };
+      }
       case 'resend':
         return await testResend(inputs, configs);
       case 'stripe':

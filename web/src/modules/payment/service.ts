@@ -18,6 +18,10 @@ import {
   type PaymentOrder,
   type PaymentRefund,
 } from '@/core/payment/types';
+import {
+  waffoCredentialsConfigured,
+  WaffoProvider,
+} from '@/core/payment/waffo';
 import { credit, order, subscription } from '@/config/db/schema';
 import { getAllConfigs } from '@/modules/config/service';
 import {
@@ -69,6 +73,15 @@ async function getPaymentManager(): Promise<PaymentManager> {
   // Rebuild manager if provider configs changed
   const hash = JSON.stringify([
     c('stripe_secret_key') || c('stripe_api_key'),
+    ...[
+      'waffo_enabled',
+      'waffo_environment',
+      'waffo_merchant_id',
+      'waffo_private_key',
+      'waffo_store_id',
+      'waffo_pro_product_id',
+      'waffo_webhook_public_key',
+    ].map(c),
     c('creem_enabled'),
     c('creem_api_key'),
     c('alipay_app_id'),
@@ -79,6 +92,13 @@ async function getPaymentManager(): Promise<PaymentManager> {
 
   manager = new PaymentManager();
   managerConfigHash = hash;
+
+  if (waffoCredentialsConfigured(configs)) {
+    manager.addProvider(
+      new WaffoProvider(configs),
+      c('default_payment_provider') === 'waffo'
+    );
+  }
 
   const stripeKey = c('stripe_secret_key') || c('stripe_api_key');
   if (stripeKey) {
@@ -224,9 +244,14 @@ export async function createCheckout(params: {
       paymentInterval: paymentOrder.plan?.interval || null,
       paymentProvider: session.provider,
       paymentSessionId: session.checkoutInfo.sessionId,
-      checkoutInfo: JSON.stringify(session.checkoutInfo),
+      checkoutInfo: JSON.stringify(
+        session.provider === 'waffo'
+          ? { sessionId: session.checkoutInfo.sessionId }
+          : session.checkoutInfo
+      ),
       checkoutResult: JSON.stringify(session.checkoutResult),
-      checkoutUrl: session.checkoutInfo.checkoutUrl,
+      checkoutUrl:
+        session.provider === 'waffo' ? '' : session.checkoutInfo.checkoutUrl,
       description: paymentOrder.description || '',
       reference: params.reference || null,
     });

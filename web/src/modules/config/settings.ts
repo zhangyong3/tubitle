@@ -126,6 +126,13 @@ export function getSettingGroups(): SettingGroup[] {
 
     // Payment
     {
+      name: 'waffo',
+      title: 'Waffo Pancake',
+      description:
+        'Pro membership payments. Configure test credentials before enabling checkout.',
+      tab: 'payment',
+    },
+    {
       name: 'basic_payment',
       title: 'Basic',
       description: 'Payment general settings',
@@ -686,6 +693,7 @@ export function getSettings(): Setting[] {
       title: 'Default provider',
       type: 'select',
       options: [
+        { label: 'Waffo Pancake', value: 'waffo' },
         { label: 'Stripe', value: 'stripe' },
         { label: 'Creem', value: 'creem' },
         { label: 'PayPal', value: 'paypal' },
@@ -694,6 +702,66 @@ export function getSettings(): Setting[] {
       ],
       group: 'basic_payment',
       tab: 'payment',
+    },
+
+    {
+      name: 'waffo_enabled',
+      title: 'Enable Waffo',
+      type: 'switch',
+      group: 'waffo',
+      tab: 'payment',
+      defaultValue: 'false',
+    },
+    {
+      name: 'waffo_environment',
+      title: 'Environment',
+      type: 'select',
+      group: 'waffo',
+      tab: 'payment',
+      defaultValue: 'test',
+      options: [
+        { label: 'Test', value: 'test' },
+        { label: 'Production', value: 'prod' },
+      ],
+    },
+    {
+      name: 'waffo_merchant_id',
+      title: 'Merchant ID',
+      type: 'text',
+      group: 'waffo',
+      tab: 'payment',
+    },
+    {
+      name: 'waffo_store_id',
+      title: 'Store ID',
+      type: 'text',
+      group: 'waffo',
+      tab: 'payment',
+    },
+    {
+      name: 'waffo_private_key',
+      title: 'API private key (PEM)',
+      type: 'textarea',
+      group: 'waffo',
+      tab: 'payment',
+      tip: 'Server-side signing key. Never share this key. Paste the complete PEM including BEGIN/END lines.',
+    },
+    {
+      name: 'waffo_pro_product_id',
+      title: 'Pro monthly product ID',
+      type: 'text',
+      group: 'waffo',
+      tab: 'payment',
+      tip: 'Create a USD 3.50 monthly subscription product in Waffo. Use the ID for the selected environment.',
+    },
+
+    {
+      name: 'waffo_webhook_public_key',
+      title: 'Webhook public key override (PEM)',
+      type: 'textarea',
+      group: 'waffo',
+      tab: 'payment',
+      tip: 'Optional. The official SDK includes environment-specific verification keys. Override only with the public key from Waffo Dashboard for the selected environment.',
     },
 
     // ─── Payment / Stripe ────────────────────────────────────────────

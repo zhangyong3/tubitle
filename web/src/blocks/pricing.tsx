@@ -1,7 +1,9 @@
 import { ArrowRight, Check } from 'lucide-react';
 
 import { Link } from '@/core/i18n/navigation';
+import { getPricingProduct, PRO_MONTHLY_PRODUCT_ID } from '@/config/pricing';
 import { m } from '@/paraglide/messages.js';
+import { getLocale } from '@/paraglide/runtime.js';
 
 export function Pricing() {
   const plans = [
@@ -19,7 +21,13 @@ export function Pricing() {
     },
     {
       title: m['tubitle.pricing.pro'](),
-      price: m['tubitle.pricing.proPrice'](),
+      price:
+        new Intl.NumberFormat(getLocale(), {
+          style: 'currency',
+          currency: 'USD',
+        }).format(
+          getPricingProduct(PRO_MONTHLY_PRODUCT_ID)!.priceInCents / 100
+        ) + m['tubitle.membership.perMonth'](),
       description: m['tubitle.pricing.proDescription'](),
       features: [
         m['tubitle.pricing.pro1'](),
@@ -57,7 +65,9 @@ export function Pricing() {
               ))}
             </ul>
             <Link
-              href="/sign-up?callbackUrl=%2Fsettings"
+              href={
+                i ? '/settings/membership' : '/sign-up?callbackUrl=%2Fsettings'
+              }
               className={i ? 'tt-button tt-button-secondary' : 'tt-button'}
             >
               {plan.cta}

@@ -6,8 +6,8 @@
  */
 export const USER_FEATURES = {
   credits_enabled: false,
-  billing_enabled: false,
-  payments_enabled: false,
+  billing_enabled: true,
+  payments_enabled: true,
   /** API Keys page. Off until the project actually offers an API. */
   apikeys_enabled: false,
   /** Support tickets: the page and the floating support button. */

@@ -2,9 +2,11 @@ import { createFileRoute } from '@tanstack/react-router';
 import { resolveCharge } from '@/server/payment/charge';
 
 import { getAuth } from '@/core/auth';
-import { getPricingProduct } from '@/config/pricing';
+import { waffoConfigured } from '@/core/payment/waffo';
+import { getPricingProduct, PRO_MONTHLY_PRODUCT_ID } from '@/config/pricing';
 import { getAllConfigs } from '@/modules/config/service';
 import { createCheckout } from '@/modules/payment/service';
+import { planFor } from '@/lib/learning-plan';
 import { localizedPath } from '@/lib/locale-path';
 import { enforceMinIntervalRateLimit } from '@/lib/rate-limit';
 import { respData, respErr } from '@/lib/resp';
@@ -49,7 +51,9 @@ async function POST({ request }: { request: Request }) {
     if (userLimited) return userLimited;
 
     const body = await request.json().catch(() => ({}));
-    const { product_id, payment_provider, redirect, locale } = body;
+    const { product_id, redirect, locale } = body;
+    let payment_provider = body.payment_provider;
+    const configs = await getAllConfigs();
 
     if (!product_id || typeof product_id !== 'string') {
       return respErr('Missing product_id');
@@ -66,9 +70,18 @@ async function POST({ request }: { request: Request }) {
       return respErr('Unknown product');
     }
 
+    if (product.productId === PRO_MONTHLY_PRODUCT_ID) {
+      if (!waffoConfigured(configs))
+        return respErr('Waffo checkout is not available yet', { status: 503 });
+      if ((await planFor(session.user.id)) === 'pro')
+        return respErr('You already have an active Pro membership', {
+          status: 409,
+        });
+      payment_provider = 'waffo';
+    }
+
     // Catalog price for the chosen provider (CNY providers, admin test
     // amounts): see resolveCharge.
-    const configs = await getAllConfigs();
     const charge = await resolveCharge({
       product,
       paymentProvider: payment_provider,
@@ -112,6 +125,7 @@ async function POST({ request }: { request: Request }) {
         customer: {
           email: session.user.email,
           name: session.user.name,
+          metadata: { userId: session.user.id },
         },
         plan: product.plan
           ? {

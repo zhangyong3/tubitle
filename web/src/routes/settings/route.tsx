@@ -2,6 +2,7 @@ import { createFileRoute, Outlet } from '@tanstack/react-router';
 import {
   Coins,
   CreditCard,
+  Crown,
   Home,
   Key,
   LayoutDashboard,
@@ -33,6 +34,12 @@ function SettingsLayout() {
       href: '/settings',
       label: m['settings.nav.overview'](),
       icon: LayoutDashboard,
+    },
+    {
+      href: '/settings/membership',
+      label: m['tubitle.membership.title'](),
+      icon: Crown,
+      group: accountGroup,
     },
     {
       href: '/settings/profile',

@@ -44,11 +44,23 @@ export type PricingProduct = {
 };
 
 /**
- * Default demo catalog. Replace with your real products when launching.
+ * Approved Tubitle membership catalog.
  * Keys MUST match what the pricing UI sends as product_id.
  */
-// Paid products stay empty until Tubitle pricing is approved and configured.
-export const pricingCatalog: Record<string, PricingProduct> = {};
+export const PRO_MONTHLY_PRODUCT_ID = 'tubitle-pro-monthly';
+export const pricingCatalog: Record<string, PricingProduct> = {
+  [PRO_MONTHLY_PRODUCT_ID]: {
+    productId: PRO_MONTHLY_PRODUCT_ID,
+    productName: 'Tubitle Pro',
+    planName: 'Pro',
+    description: 'Tubitle Pro monthly membership',
+    type: PaymentType.SUBSCRIPTION,
+    priceInCents: 350,
+    currency: 'usd',
+    credits: 0,
+    plan: { name: 'Pro', interval: PaymentInterval.MONTH, intervalCount: 1 },
+  },
+};
 
 export function getPricingProduct(productId: string): PricingProduct | null {
   if (!productId) return null;
