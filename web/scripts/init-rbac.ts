@@ -46,6 +46,20 @@ async function createScriptDb() {
 }
 
 const defaultPermissions = [
+  {
+    code: 'admin.usage.read',
+    resource: 'usage',
+    action: 'read',
+    title: 'Read member usage',
+    description: 'View retained 30-day usage aggregates',
+  },
+  {
+    code: 'admin.podcasts.read',
+    resource: 'podcasts',
+    action: 'read',
+    title: 'Read private podcasts',
+    description: 'Read member podcast scripts and audio within retention',
+  },
   // Admin access
   {
     code: 'admin.access',
@@ -351,6 +365,8 @@ const defaultRoles = [
     permissions: [
       'admin.access',
       'admin.users.*',
+      'admin.usage.read',
+      'admin.podcasts.read',
       'admin.posts.*',
       // Explicit: guest-posts.reject refunds, like payments.refund.
       'admin.guest-posts.read',

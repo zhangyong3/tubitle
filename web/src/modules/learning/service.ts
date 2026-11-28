@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-import { learningActivityInput, type LearningActivityInput } from '@/lib/learning';
 import { userQuotaTimeZone } from '@/lib/user-quota-timezone';
 import { quotaDayWindow } from '@/lib/quota-timezone';
 import { atomic, AtomicGuardError, guard } from '@/core/db/atomic';
@@ -9,7 +7,7 @@ import { readDictionarySnapshots } from '@/lib/dictionary-snapshots';
 import { and, count, desc, eq, gte, lt, isNull, or, sql } from 'drizzle-orm';
 
 import { db } from '@/core/db';
-import { learningRecord, learningActivity, user } from '@/config/db/schema';
+import { learningRecord, user } from '@/config/db/schema';
 import { getUuid } from '@/lib/hash';
 import { learningInput, type LearningInput } from '@/lib/learning';
 
@@ -31,6 +29,8 @@ const publicColumns = {
   clientRecordId: learningRecord.clientRecordId,
   kind: learningRecord.kind,
   text: learningRecord.text,
+  sourceLanguage: learningRecord.sourceLanguage,
+  targetLanguage: learningRecord.targetLanguage,
   context: learningRecord.context,
   translation: learningRecord.translation,
   note: learningRecord.note,
@@ -196,21 +196,4 @@ export async function exportRecords(userId: string) {
     .orderBy(desc(learningRecord.createdAt));
 }
 
-export async function saveActivity(userId: string, input: LearningActivityInput) {
-  const parsed = learningActivityInput.parse(input);
-  await atomic(q => parsed.days.map(day => {
-    const id = createHash('sha256').update(`${userId}\0${parsed.clientId}\0${day.day}`).digest('hex');
-    const values = { id, userId, clientId: parsed.clientId, ...day, updatedAt: new Date() };
-    // Absolute totals and monotonic updates make retries and out-of-order
-    // uploads idempotent without a separate per-event history table.
-    const update = {
-      sentences: sql`case when ${learningActivity.sentences} < ${day.sentences} then ${day.sentences} else ${learningActivity.sentences} end`,
-      durationMs: sql`case when ${learningActivity.durationMs} < ${day.durationMs} then ${day.durationMs} else ${learningActivity.durationMs} end`,
-      updatedAt: values.updatedAt,
-    };
-    const query = q.insert(learningActivity).values(values);
-    return typeof query.onConflictDoUpdate === 'function'
-      ? query.onConflictDoUpdate({ target: learningActivity.id, set: update })
-      : query.onDuplicateKeyUpdate({ set: update });
-  }));
-}
+export { savePlayback as saveActivity } from '@/lib/member-usage';

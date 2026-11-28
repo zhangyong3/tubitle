@@ -417,7 +417,7 @@ test('batched playback totals are idempotent, monotonic and separate from librar
   const userId = 'playback-statistics';
   await db().insert(user).values({id:userId,name:userId,email:`${userId}@example.test`});
   const clientId=crypto.randomUUID();
-  const data={type:'activity' as const,clientId,days:[{day:'2026-11-26',sentences:10,durationMs:600000}]};
+  const data={type:'activity' as const,clientId,days:[{day:new Date().toISOString().slice(0,10),sentences:10,durationMs:600000}]};
   await Promise.all([learning.saveActivity(userId,data),learning.saveActivity(userId,data)]);
   await learning.saveActivity(userId,{...data,days:[{...data.days[0],sentences:5,durationMs:300000}]});
   let rows=await db().select().from(learningActivity).where(eq(learningActivity.userId,userId));

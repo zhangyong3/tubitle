@@ -22,6 +22,7 @@ import * as tickets_id from './handlers/tickets-id';
 import * as users_credits from './handlers/users-credits';
 import * as users_id from './handlers/users-id';
 import * as users_index from './handlers/users-index';
+import * as users_learning from './handlers/users-learning';
 import * as users_password from './handlers/users-password';
 import * as users_sources from './handlers/users-sources';
 import * as users_timeline from './handlers/users-timeline';
@@ -33,6 +34,8 @@ export const handlers: Record<
 > = {
   users_list: users_index.GET,
   users_get: users_id.GET,
+  users_usage: users_learning.usage,
+  users_podcasts: users_learning.podcasts,
   users_sources: users_sources.GET,
   users_timeline: users_timeline.GET,
   users_set_password: users_password.POST,

@@ -37,7 +37,13 @@ export const user = table(
       .default(sqliteNowMs)
       .$onUpdate(() => new Date())
       .notNull(),
-    registrationTimeZone: text('registration_time_zone').notNull().default('Asia/Shanghai'),
+    registrationTimeZone: text('registration_time_zone')
+      .notNull()
+      .default('Asia/Shanghai'),
+    podcastLanguage: text('podcast_language'),
+    podcastLanguageNotice: integer('podcast_language_notice')
+      .notNull()
+      .default(1),
     utmSource: text('utm_source').notNull().default(''),
     ip: text('ip').notNull().default(''),
     locale: text('locale').notNull().default(''),
@@ -831,6 +837,9 @@ export const learningRecord = table(
     clientRecordId: text('client_record_id').notNull(),
     kind: text('kind').notNull(),
     text: text('text').notNull(),
+    sourceLanguage: text('source_language'),
+    targetLanguage: text('target_language'),
+    lastPodcastAt: integer('last_podcast_at', { mode: 'timestamp_ms' }),
     context: text('context').notNull(),
     translation: text('translation').notNull(),
     note: text('note').notNull(),
@@ -854,29 +863,126 @@ export type LearningRecord = typeof learningRecord.$inferSelect;
 export type NewLearningRecord = typeof learningRecord.$inferInsert;
 
 // Daily AI reservations: unique numbered slots make concurrent limits atomic.
-export const analysisUsage = table('analysis_usage', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  requestId: text('request_id').notNull(),
-  sentenceHash: text('sentence_hash').notNull(),
-  day: text('day').notNull(),
-  slot: integer('slot'),
-  status: text('status').notNull(),
-  result: text('result'),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
-}, (t) => [
-  uniqueIndex('idx_analysis_user_request').on(t.userId, t.requestId),
-  uniqueIndex('idx_analysis_user_day_slot').on(t.userId, t.day, t.slot),
-]);
+export const analysisUsage = table(
+  'analysis_usage',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    requestId: text('request_id').notNull(),
+    sentenceHash: text('sentence_hash').notNull(),
+    day: text('day').notNull(),
+    slot: integer('slot'),
+    status: text('status').notNull(),
+    result: text('result'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('idx_analysis_user_request').on(t.userId, t.requestId),
+    uniqueIndex('idx_analysis_user_day_slot').on(t.userId, t.day, t.slot),
+  ]
+);
 
 // Cumulative playback totals per account, browser installation and day.
-export const learningActivity = table('learning_activity', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  clientId: text('client_id').notNull(),
-  day: text('day').notNull(),
-  sentences: integer('sentences').notNull(),
-  durationMs: integer('duration_ms').notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
-}, t => [index('idx_learning_activity_user_day').on(t.userId, t.day)]);
+export const learningActivity = table(
+  'learning_activity',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    clientId: text('client_id').notNull(),
+    day: text('day').notNull(),
+    sentences: integer('sentences').notNull(),
+    durationMs: integer('duration_ms').notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('idx_learning_activity_user_day').on(t.userId, t.day)]
+);
+
+// Personalized podcasts: private content has an absolute 30-day lifetime.
+export const podcastPreference = table('podcast_preference', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  language: text('language').notNull(),
+  enabled: integer('enabled').notNull().default(0),
+  trialConsumedAt: integer('trial_consumed_at', { mode: 'timestamp_ms' }),
+  nextDueAt: integer('next_due_at', { mode: 'timestamp_ms' }),
+  scanAfter: integer('scan_after', { mode: 'timestamp_ms' }),
+  activeEpisodeId: text('active_episode_id'),
+});
+export const podcastEpisode = table(
+  'podcast_episode',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    sourceLanguage: text('source_language').notNull(),
+    translationLanguage: text('translation_language').notNull(),
+    status: text('status').notNull().default('queued'),
+    title: text('title').notNull(),
+    script: text('script'),
+    manifest: text('manifest'),
+    errorCode: text('error_code'),
+    manualRetries: integer('manual_retries').notNull().default(0),
+    attempts: integer('attempts').notNull().default(0),
+    leaseToken: text('lease_token'),
+    leaseUntil: integer('lease_until', { mode: 'timestamp_ms' }),
+    retryAt: integer('retry_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    publishedAt: integer('published_at', { mode: 'timestamp_ms' }),
+    lastListenedAt: integer('last_listened_at', { mode: 'timestamp_ms' }),
+    listenedMs: integer('listened_ms').notNull().default(0),
+    progress: integer('progress').notNull().default(0),
+    progressOffset: integer('progress_offset').notNull().default(0),
+    coverage: text('coverage'),
+    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+    playbackSequence: integer('playback_sequence').notNull().default(0),
+    playbackClient: text('playback_client'),
+    durationMs: integer('duration_ms').notNull().default(0),
+  },
+  (t) => [
+    index('idx_podcast_user_created').on(t.userId, t.createdAt),
+    index('idx_podcast_expiry').on(t.expiresAt),
+    index('idx_podcast_pending').on(t.status, t.retryAt),
+  ]
+);
+export const podcastSource = table(
+  'podcast_source',
+  {
+    id: text('id').primaryKey(),
+    episodeId: text('episode_id')
+      .notNull()
+      .references(() => podcastEpisode.id, { onDelete: 'cascade' }),
+    recordId: text('record_id')
+      .notNull()
+      .references(() => learningRecord.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    index('idx_podcast_source_episode').on(t.episodeId),
+    index('idx_podcast_source_record').on(t.recordId),
+  ]
+);
+export const memberUsageDay = table(
+  'member_usage_day',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    day: text('day').notNull(),
+    translations: integer('translations').notNull().default(0),
+    playbackMs: integer('playback_ms').notNull().default(0),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [
+    index('idx_usage_user_day').on(t.userId, t.day),
+    index('idx_usage_day').on(t.day),
+  ]
+);

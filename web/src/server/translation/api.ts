@@ -8,6 +8,7 @@ import {
   TranslationError,
 } from '@/core/translation';
 import { getAllConfigs } from '@/modules/config/service';
+import { recordTranslation } from '@/modules/member-usage/service';
 import { respData, respJson } from '@/lib/resp';
 
 import {
@@ -86,10 +87,14 @@ export async function handleExtensionTranslation(request: Request) {
       await subtitlePlan(access.userId),
       config
     );
-    return respData(
-      await translate(config, parsed.data, selection, upstreamSignal),
-      { headers }
+    const result = await translate(
+      config,
+      parsed.data,
+      selection,
+      upstreamSignal
     );
+    await recordTranslation(access.userId);
+    return respData(result, { headers });
   } catch (error) {
     if (error instanceof SubtitleQuotaError)
       return respJson(

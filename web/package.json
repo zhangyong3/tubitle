@@ -34,7 +34,11 @@
     "postbuild": "node scripts/verify-messages.mjs",
     "test:admin-entry": "node --import tsx --test tests/admin-entry.test.ts",
     "test:analysis": "node --import tsx --test tests/analysis.test.ts",
-    "test:translation": "node --import tsx --test tests/translation.test.ts"
+    "test:translation": "node --import tsx --test tests/translation.test.ts",
+    "podcast:worker": "tsx scripts/with-env.ts tsx scripts/podcast-worker.ts worker",
+    "podcast:tick": "tsx scripts/with-env.ts tsx scripts/podcast-worker.ts tick",
+    "podcast:cleanup": "tsx scripts/with-env.ts tsx scripts/podcast-worker.ts cleanup",
+    "test:podcasts": "node --import tsx --test tests/podcasts.test.ts tests/podcast-migration.test.ts"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,mjs,cjs}": "prettier --write",
@@ -77,6 +81,7 @@
     "nanoid": "^5.1.16",
     "next-themes": "^0.4.6",
     "opencc-js": "^1.4.2",
+    "pinyin-pro": "3.29.5",
     "postgres": "^3.4.9",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

@@ -1,6 +1,8 @@
-import { REGISTRATION_TIME_ZONE_COOKIE } from '@/lib/quota-timezone';
 import { oneTapClient } from 'better-auth/client/plugins';
 import { createAuthClient } from 'better-auth/react';
+
+import { REGISTRATION_TIME_ZONE_COOKIE } from '@/lib/quota-timezone';
+import { getLocale } from '@/paraglide/runtime.js';
 
 const baseURL =
   typeof window !== 'undefined'
@@ -9,6 +11,7 @@ const baseURL =
 
 function captureRegistrationTimeZone() {
   if (typeof document === 'undefined') return;
+  document.cookie = `tubitle_registration_language=${encodeURIComponent(getLocale())}; Path=/; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   document.cookie = `${REGISTRATION_TIME_ZONE_COOKIE}=${encodeURIComponent(timeZone)}; Path=/; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
 }

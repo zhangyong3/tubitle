@@ -11,6 +11,18 @@ export const learningInput = z
       .optional(),
     kind: z.enum(['word', 'sentence']),
     text: z.string().trim().min(1).max(2000),
+    sourceLanguage: z
+      .string()
+      .regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8}){0,2}$/)
+      .max(35)
+      .nullable()
+      .optional(),
+    targetLanguage: z
+      .string()
+      .regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8}){0,2}$/)
+      .max(35)
+      .nullable()
+      .optional(),
     context: z.string().trim().max(4000).default(''),
     translation: z.string().trim().max(4000).default(''),
     note: z.string().trim().max(4000).default(''),
@@ -39,6 +51,8 @@ export interface LearningItem {
   clientRecordId: string;
   kind: 'word' | 'sentence';
   text: string;
+  sourceLanguage?: string | null;
+  targetLanguage?: string | null;
   context: string;
   translation: string;
   note: string;
@@ -69,16 +83,35 @@ export function formatVideoTime(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-export const learningActivityInput = z.object({
-  type: z.literal('activity'),
-  clientId: z.string().uuid(),
-  days: z.array(z.object({
-    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
-      const date = new Date(`${value}T00:00:00Z`);
-      return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
-    }),
-    sentences: z.number().int().min(0).max(1000000),
-    durationMs: z.number().int().min(0).max(16 * 86400000),
-  }).strict()).min(1).max(7),
-}).strict();
+export const learningActivityInput = z
+  .object({
+    type: z.literal('activity'),
+    clientId: z.string().uuid(),
+    days: z
+      .array(
+        z
+          .object({
+            day: z
+              .string()
+              .regex(/^\d{4}-\d{2}-\d{2}$/)
+              .refine((value) => {
+                const date = new Date(`${value}T00:00:00Z`);
+                return (
+                  Number.isFinite(date.getTime()) &&
+                  date.toISOString().slice(0, 10) === value
+                );
+              }),
+            sentences: z.number().int().min(0).max(1000000),
+            durationMs: z
+              .number()
+              .int()
+              .min(0)
+              .max(16 * 86400000),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(7),
+  })
+  .strict();
 export type LearningActivityInput = z.infer<typeof learningActivityInput>;

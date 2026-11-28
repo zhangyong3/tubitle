@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import mdx from '@mdx-js/rollup';
@@ -48,6 +48,10 @@ const keepPostgres = workersDb === 'postgresql' || workersDb === 'postgres';
 
 export default defineConfig({
   server: {
+    // Managed worktrees can share a dependency directory outside the checkout.
+    fs: {
+      allow: ['..', realpathSync(new URL('./node_modules', import.meta.url))],
+    },
     port: 3000,
     // Cloud sandboxes (ShipAny Code / e2b) proxy the dev server through a
     // per-sandbox subdomain; without this Vite's host check blocks the

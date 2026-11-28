@@ -67,6 +67,12 @@ interface User {
   image: string | null;
   createdAt: string;
   credits: number;
+  usage?: {
+    translations: number;
+    playbackMs: number;
+    podcasts: number;
+    listenedMs: number;
+  };
   utmSource: string;
   ip: string;
   roles: { name: string; title: string }[];
@@ -195,6 +201,12 @@ function UsersPage() {
       userId: string;
       action: 'grant' | 'deduct';
       credits: number;
+      usage?: {
+        translations: number;
+        playbackMs: number;
+        podcasts: number;
+        listenedMs: number;
+      };
       description?: string;
     }) => apiPost<{ balance: number }>('/api/admin/users/credits', vars),
     onSuccess: (_data, vars) => {
@@ -352,6 +364,20 @@ function UsersPage() {
         ) : (
           <span className="text-muted-foreground">—</span>
         ),
+    },
+    {
+      header: m['podcast.translations'](),
+      cell: (u) => (
+        <span className="tabular-nums">{u.usage?.translations ?? '·'}</span>
+      ),
+    },
+    {
+      header: m['podcast.playback'](),
+      cell: (u) => (
+        <span className="tabular-nums">
+          {u.usage ? `${Math.round(u.usage.playbackMs / 60000)} min` : '·'}
+        </span>
+      ),
     },
     {
       header: m['admin.users.credits_col'](),

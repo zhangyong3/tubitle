@@ -76,6 +76,22 @@ function op(
 
 export const adminOperations: AdminOperation[] = [
   op(
+    'users_usage',
+    'View retained 30-day translation and playback statistics',
+    'usage.read',
+    'GET',
+    'users/usage',
+    z.object({ userId: id }).strict()
+  ),
+  op(
+    'users_podcasts',
+    'Read retained private podcast scripts, audio and playback usage',
+    'podcasts.read',
+    'GET',
+    'users/podcasts',
+    z.object({ userId: id, id: id.optional(), page: page.page }).strict()
+  ),
+  op(
     'users_list',
     "List users with balances. Search matches email or name; verify an exact email before a write. utm_source filters by exact sign-up source; '' selects untagged (direct) users.",
     'users.read',

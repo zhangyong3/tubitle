@@ -1,4 +1,3 @@
-import { normalizeQuotaTimeZone, REGISTRATION_TIME_ZONE_COOKIE } from '@/lib/quota-timezone';
 import { betterAuth, type BetterAuthOptions } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { oneTap } from 'better-auth/plugins';
@@ -25,6 +24,10 @@ import {
   sanitizeUtm,
 } from '@/lib/cookie';
 import { getUuid } from '@/lib/hash';
+import {
+  normalizeQuotaTimeZone,
+  REGISTRATION_TIME_ZONE_COOKIE,
+} from '@/lib/quota-timezone';
 
 function assertProductionAuthSecret() {
   // Only enforce at runtime in production.
@@ -258,7 +261,19 @@ export function getAuth(configs?: Record<string, string>) {
     },
     user: {
       additionalFields: {
-        registrationTimeZone: { type: 'string', input: false, required: false, defaultValue: 'Asia/Shanghai' },
+        podcastLanguage: { type: 'string', input: false, required: false },
+        podcastLanguageNotice: {
+          type: 'number',
+          input: false,
+          required: false,
+          defaultValue: 1,
+        },
+        registrationTimeZone: {
+          type: 'string',
+          input: false,
+          required: false,
+          defaultValue: 'Asia/Shanghai',
+        },
         utmSource: {
           type: 'string',
           input: false,
@@ -325,9 +340,22 @@ export function getAuth(configs?: Record<string, string>) {
             return {
               data: {
                 ...userData,
+                podcastLanguage: (() => {
+                  try { return Intl.getCanonicalLocales(decodeURIComponent(getCookieFromCtx(ctx, 'tubitle_registration_language') || 'en'))[0] || 'en'; }
+                  catch { return 'en'; }
+                })(),
+                podcastLanguageNotice: 1,
                 registrationTimeZone: (() => {
-                  try { return normalizeQuotaTimeZone(decodeURIComponent(getCookieFromCtx(ctx, REGISTRATION_TIME_ZONE_COOKIE) || "")); }
-                  catch { return normalizeQuotaTimeZone(undefined); }
+                  try {
+                    return normalizeQuotaTimeZone(
+                      decodeURIComponent(
+                        getCookieFromCtx(ctx, REGISTRATION_TIME_ZONE_COOKIE) ||
+                          ''
+                      )
+                    );
+                  } catch {
+                    return normalizeQuotaTimeZone(undefined);
+                  }
                 })(),
                 utmSource: utm('utm_source'),
                 utmCampaign: utm('utm_campaign'),

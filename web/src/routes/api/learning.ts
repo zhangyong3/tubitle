@@ -3,11 +3,13 @@ import { authorizeLearning, readLearningBody } from '@/server/learning/api';
 import { z } from 'zod';
 
 import * as learning from '@/modules/learning/service';
+import { invalidateForRecord } from '@/modules/podcasts/service';
 import { learningUpdate } from '@/lib/learning';
 import { respData, respErr, respOk } from '@/lib/resp';
 
 export async function handleLearning(request: Request) {
-  if (!['GET', 'PATCH', 'DELETE'].includes(request.method)) return respErr('Method not allowed', { status: 405 });
+  if (!['GET', 'PATCH', 'DELETE'].includes(request.method))
+    return respErr('Method not allowed', { status: 405 });
   const access = await authorizeLearning(request);
   if (access.response) return access.response;
   const userId = access.userId!;
@@ -43,6 +45,7 @@ export async function handleLearning(request: Request) {
     const id = url.searchParams.get('id');
     if (!id || id.length > 100)
       return respErr('Invalid ID', { status: 400, headers });
+    await invalidateForRecord(userId, id);
     await learning.remove(userId, id);
     return respOk({ headers });
   } catch (error) {

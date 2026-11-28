@@ -34,7 +34,11 @@ export const user = table(
     image: text('image'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().onUpdateNow().notNull(),
-    registrationTimeZone: varchar('registration_time_zone', { length: 100 }).notNull().default('Asia/Shanghai'),
+    registrationTimeZone: varchar('registration_time_zone', { length: 100 })
+      .notNull()
+      .default('Asia/Shanghai'),
+    podcastLanguage: varchar('podcast_language', { length: 191 }),
+    podcastLanguageNotice: int('podcast_language_notice').notNull().default(1),
     utmSource: varchar('utm_source', { length: 100 }).notNull().default(''),
     ip: varchar('ip', { length: 45 }).notNull().default(''),
     locale: varchar('locale', { length: 20 }).notNull().default(''),
@@ -685,6 +689,9 @@ export const learningRecord = table(
     clientRecordId: varchar191('client_record_id').notNull(),
     kind: varchar191('kind').notNull(),
     text: text('text').notNull(),
+    sourceLanguage: varchar('source_language', { length: 191 }),
+    targetLanguage: varchar('target_language', { length: 191 }),
+    lastPodcastAt: timestamp('last_podcast_at'),
     context: text('context').notNull(),
     translation: text('translation').notNull(),
     note: text('note').notNull(),
@@ -708,29 +715,128 @@ export type LearningRecord = typeof learningRecord.$inferSelect;
 export type NewLearningRecord = typeof learningRecord.$inferInsert;
 
 // Daily AI reservations: unique numbered slots make concurrent limits atomic.
-export const analysisUsage = table('analysis_usage', {
-  id: varchar191('id').primaryKey(),
-  userId: varchar191('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  requestId: varchar191('request_id').notNull(),
-  sentenceHash: varchar191('sentence_hash').notNull(),
-  day: varchar191('day').notNull(),
-  slot: int('slot'),
-  status: varchar191('status').notNull(),
-  result: longtext('result'),
-  createdAt: timestamp('created_at').notNull(),
-  updatedAt: timestamp('updated_at').notNull(),
-}, (t) => [
-  uniqueIndex('idx_analysis_user_request').on(t.userId, t.requestId),
-  uniqueIndex('idx_analysis_user_day_slot').on(t.userId, t.day, t.slot),
-]);
+export const analysisUsage = table(
+  'analysis_usage',
+  {
+    id: varchar191('id').primaryKey(),
+    userId: varchar191('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    requestId: varchar191('request_id').notNull(),
+    sentenceHash: varchar191('sentence_hash').notNull(),
+    day: varchar191('day').notNull(),
+    slot: int('slot'),
+    status: varchar191('status').notNull(),
+    result: longtext('result'),
+    createdAt: timestamp('created_at').notNull(),
+    updatedAt: timestamp('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('idx_analysis_user_request').on(t.userId, t.requestId),
+    uniqueIndex('idx_analysis_user_day_slot').on(t.userId, t.day, t.slot),
+  ]
+);
 
 // Cumulative playback totals per account, browser installation and day.
-export const learningActivity = table('learning_activity', {
-  id: varchar('id', { length: 191 }).primaryKey(),
-  userId: varchar('user_id', { length: 191 }).notNull().references(() => user.id, { onDelete: 'cascade' }),
-  clientId: varchar('client_id', { length: 191 }).notNull(),
-  day: varchar('day', { length: 191 }).notNull(),
-  sentences: int('sentences').notNull(),
-  durationMs: int('duration_ms').notNull(),
-  updatedAt: timestamp('updated_at').notNull(),
-}, t => [index('idx_learning_activity_user_day').on(t.userId, t.day)]);
+export const learningActivity = table(
+  'learning_activity',
+  {
+    id: varchar('id', { length: 191 }).primaryKey(),
+    userId: varchar('user_id', { length: 191 })
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    clientId: varchar('client_id', { length: 191 }).notNull(),
+    day: varchar('day', { length: 191 }).notNull(),
+    sentences: int('sentences').notNull(),
+    durationMs: int('duration_ms').notNull(),
+    updatedAt: timestamp('updated_at').notNull(),
+  },
+  (t) => [index('idx_learning_activity_user_day').on(t.userId, t.day)]
+);
+
+// Personalized podcasts: private content has an absolute 30-day lifetime.
+export const podcastPreference = table('podcast_preference', {
+  userId: varchar('user_id', { length: 191 })
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  language: varchar('language', { length: 191 }).notNull(),
+  enabled: int('enabled').notNull().default(0),
+  trialConsumedAt: timestamp('trial_consumed_at'),
+  nextDueAt: timestamp('next_due_at'),
+  scanAfter: timestamp('scan_after'),
+  activeEpisodeId: varchar('active_episode_id', { length: 191 }),
+});
+export const podcastEpisode = table(
+  'podcast_episode',
+  {
+    id: varchar('id', { length: 191 }).primaryKey(),
+    userId: varchar('user_id', { length: 191 })
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    kind: varchar('kind', { length: 191 }).notNull(),
+    sourceLanguage: varchar('source_language', { length: 191 }).notNull(),
+    translationLanguage: varchar('translation_language', {
+      length: 191,
+    }).notNull(),
+    status: varchar('status', { length: 191 }).notNull().default('queued'),
+    title: text('title').notNull(),
+    script: longtext('script'),
+    manifest: text('manifest'),
+    errorCode: varchar('error_code', { length: 191 }),
+    manualRetries: int('manual_retries').notNull().default(0),
+    attempts: int('attempts').notNull().default(0),
+    leaseToken: varchar('lease_token', { length: 191 }),
+    leaseUntil: timestamp('lease_until'),
+    retryAt: timestamp('retry_at'),
+    createdAt: timestamp('created_at').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    publishedAt: timestamp('published_at'),
+    lastListenedAt: timestamp('last_listened_at'),
+    listenedMs: int('listened_ms').notNull().default(0),
+    progress: int('progress').notNull().default(0),
+    progressOffset: int('progress_offset').notNull().default(0),
+    coverage: text('coverage'),
+    completedAt: timestamp('completed_at'),
+    playbackSequence: int('playback_sequence').notNull().default(0),
+    playbackClient: varchar('playback_client', { length: 191 }),
+    durationMs: int('duration_ms').notNull().default(0),
+  },
+  (t) => [
+    index('idx_podcast_user_created').on(t.userId, t.createdAt),
+    index('idx_podcast_expiry').on(t.expiresAt),
+    index('idx_podcast_pending').on(t.status, t.retryAt),
+  ]
+);
+export const podcastSource = table(
+  'podcast_source',
+  {
+    id: varchar('id', { length: 191 }).primaryKey(),
+    episodeId: varchar('episode_id', { length: 191 })
+      .notNull()
+      .references(() => podcastEpisode.id, { onDelete: 'cascade' }),
+    recordId: varchar('record_id', { length: 191 })
+      .notNull()
+      .references(() => learningRecord.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    index('idx_podcast_source_episode').on(t.episodeId),
+    index('idx_podcast_source_record').on(t.recordId),
+  ]
+);
+export const memberUsageDay = table(
+  'member_usage_day',
+  {
+    id: varchar('id', { length: 191 }).primaryKey(),
+    userId: varchar('user_id', { length: 191 })
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    day: varchar('day', { length: 191 }).notNull(),
+    translations: int('translations').notNull().default(0),
+    playbackMs: int('playback_ms').notNull().default(0),
+    updatedAt: timestamp('updated_at').notNull(),
+  },
+  (t) => [
+    index('idx_usage_user_day').on(t.userId, t.day),
+    index('idx_usage_day').on(t.day),
+  ]
+);

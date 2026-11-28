@@ -25,3 +25,5 @@ export default stub;
 // Named exports drizzle-orm's drivers reference (mysql2's createPool).
 export const createPool = stub;
 export const createConnection = stub;
+
+export const createClient = stub;

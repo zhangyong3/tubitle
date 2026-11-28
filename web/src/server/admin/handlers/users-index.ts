@@ -10,9 +10,11 @@ import {
   type SQL,
 } from 'drizzle-orm';
 
+import { matchPermission } from '@/core/auth/rbac';
 import { db } from '@/core/db';
 import { role, user, userRole } from '@/config/db/schema';
 import { getBalance } from '@/modules/credits/service';
+import { usageTotalsFor } from '@/modules/member-usage/service';
 import { respErr, respPage } from '@/lib/resp';
 import { keywordMatch } from '@/lib/sql-search';
 
@@ -93,10 +95,16 @@ export async function GET({ request, actor }: AdminHandlerContext) {
       rolesByUser.set(r.userId, list);
     }
 
+    const usage = matchPermission('admin.usage.read', actor.permissions)
+      ? await usageTotalsFor(ids)
+      : null;
     const items = await Promise.all(
       users.map(async (u: (typeof users)[number]) => ({
         ...u,
         credits: await getBalance(u.id),
+        usage: usage
+          ? usage.get(u.id) || { translations: 0, playbackMs: 0 }
+          : undefined,
         roles: rolesByUser.get(u.id) ?? [],
       }))
     );

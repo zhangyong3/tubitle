@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tubitle-podcasts",
+  "main": "src/workers/podcasts.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "tsconfig": "tsconfig.json",
+  "vars": { "DATABASE_PROVIDER": "d1" },
+  "alias": {
+    "mysql2": "./src/core/db/driver-stub.ts",
+    "mysql2/promise": "./src/core/db/driver-stub.ts",
+    "postgres": "./src/core/db/driver-stub.ts",
+    "@libsql/client": "./src/core/db/driver-stub.ts",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tubitle",
+      "database_id": "REPLACE_WITH_WEB_DATABASE_ID",
+    },
+  ],
+  "r2_buckets": [
+    { "binding": "PODCAST_BUCKET", "bucket_name": "tubitle-private-podcasts" },
+  ],
+  "queues": {
+    "producers": [{ "binding": "PODCAST_QUEUE", "queue": "tubitle-podcasts" }],
+    "consumers": [
+      {
+        "queue": "tubitle-podcasts",
+        "max_batch_size": 1,
+        "max_concurrency": 2,
+        "max_retries": 3,
+        "dead_letter_queue": "tubitle-podcasts-dead",
+      },
+    ],
+  },
+  "triggers": { "crons": ["0 * * * *"] },
+  "observability": { "enabled": true },
+}

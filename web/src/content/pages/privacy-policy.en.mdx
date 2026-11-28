@@ -1,7 +1,7 @@
 export const meta = {
   title: 'Privacy policy',
   description: 'How Tubitle web accounts and saved learning records are handled.',
-  updated_at: '2026-11-16',
+  updated_at: '2026-11-27',
 };
 
 ## Accounts and sessions
@@ -23,3 +23,12 @@ Source-video links open YouTube under its own data policies. The default Tubitle
 ## Local development release
 
 This delivery uses a local SQLite database and a local preview URL. It is not a public hosted service. Before public launch, the operator must supply contact details, actual hosting locations, retention periods and an account-deletion process.
+
+
+## Learning podcasts and usage statistics
+
+When you request a podcast or enable automatic generation, selected learning text and necessary context are sent to the configured text AI provider. Validated spoken scripts are sent to Google Cloud Text-to-Speech. You can pause automatic generation. Your podcast explanation language initially follows the webpage language at registration and can be changed in the membership center independently of extension translation preferences.
+
+Successful platform translation counts and client-reported active playback time are aggregated by user and day without an additional per-sentence request log. Administrators with dedicated permissions can read these statistics and retained podcast transcripts, audio and listening progress. Statistics retain the latest 30 UTC day buckets. Device idempotency checkpoints retain at most seven days with a daily device limit.
+
+Podcasts, scripts and associated playback records expire 30 days after creation. Access stops at expiry; maintenance removes audio and database content and retries storage failures. You may delete an episode sooner. Removing a source learning record also revokes associated podcasts and schedules cleanup. Language preferences, the used-trial marker and next-generation time survive content expiry. These rules do not automatically remove your original learning library. User-exported files and external backups cannot be immediately recalled.

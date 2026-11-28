@@ -63,6 +63,7 @@ export function getSettingTabs(): SettingTab[] {
 
 export function getSettingGroups(): SettingGroup[] {
   return [
+    { name: 'podcast', title: 'Learning podcasts', tab: 'ai' },
     { name: 'translation', title: 'Subtitle Translation', tab: 'translation' },
     // General
     {
@@ -299,6 +300,49 @@ export function getSettingGroups(): SettingGroup[] {
 
 export function getSettings(): Setting[] {
   return [
+    {
+      name: 'r2_account_id',
+      title: 'R2 account ID',
+      type: 'text',
+      group: 'podcast',
+      tab: 'ai',
+    },
+    {
+      name: 'podcast_enabled',
+      title: 'Enable learning podcasts',
+      type: 'switch',
+      group: 'podcast',
+      tab: 'ai',
+      defaultValue: 'false',
+    },
+    {
+      name: 'podcast_model',
+      title: 'Podcast script model',
+      type: 'text',
+      group: 'podcast',
+      tab: 'ai',
+      tip: 'Uses the OpenAI-compatible endpoint and key configured below.',
+    },
+    {
+      name: 'podcast_google_credentials',
+      title: 'Google Cloud TTS service account JSON',
+      type: 'password',
+      group: 'podcast',
+      tab: 'ai',
+      tip: 'Server-only service account with Cloud TTS/Gemini prediction permissions. Never paste into client settings.',
+    },
+    {
+      name: 'podcast_storage',
+      title: 'Podcast private storage',
+      type: 'select',
+      group: 'podcast',
+      tab: 'ai',
+      defaultValue: 'r2',
+      options: [
+        { label: 'Private R2', value: 'r2' },
+        { label: 'Local files (development only)', value: 'local' },
+      ],
+    },
     ...(['guest'] as const).map((plan) => ({
       name: `translation_${plan}_daily_limit`,
       title: {

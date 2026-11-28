@@ -65,3 +65,7 @@ package-lock.json
 
 # Runtime image uploads (no-storage local fallback)
 /public/uploads/
+
+# Private podcast files and per-deployment worker settings
+data/podcasts/
+wrangler.podcasts.jsonc

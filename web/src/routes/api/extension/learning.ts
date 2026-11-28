@@ -1,10 +1,11 @@
-import { planFor } from '@/lib/learning-plan';
 import { createFileRoute } from '@tanstack/react-router';
 import { readLearningBody } from '@/server/learning/api';
-
 import { authorizeExtension } from '@/server/learning/extension-auth';
+
 import * as learning from '@/modules/learning/service';
-import { learningInput, learningActivityInput } from '@/lib/learning';
+import { savePlayback } from '@/modules/member-usage/service';
+import { learningActivityInput, learningInput } from '@/lib/learning';
+import { planFor } from '@/lib/learning-plan';
 import { enforceMinIntervalRateLimit } from '@/lib/rate-limit';
 import { respData, respErr, respJson } from '@/lib/resp';
 
@@ -26,15 +27,32 @@ export async function handleExtensionLearning(request: Request) {
     if (userLimited) return userLimited;
     if (request.method === 'GET')
       return respData(
-        { userId: access.userId, name: access.name, plan: await planFor(access.userId) },
+        {
+          userId: access.userId,
+          name: access.name,
+          plan: await planFor(access.userId),
+        },
         { headers }
       );
     const body = await readLearningBody(request, 262144);
-    if (body && typeof body === 'object' && 'type' in body && body.type === 'activity') {
+    if (
+      body &&
+      typeof body === 'object' &&
+      'type' in body &&
+      body.type === 'activity'
+    ) {
       const activity = learningActivityInput.safeParse(body);
-      if (!activity.success) return respErr('Invalid learning activity', { status: 400, headers });
-      await learning.saveActivity(access.userId, activity.data);
-      return respData({ userId: access.userId, name: access.name, plan: await planFor(access.userId) }, { headers });
+      if (!activity.success)
+        return respErr('Invalid learning activity', { status: 400, headers });
+      await savePlayback(access.userId, activity.data);
+      return respData(
+        {
+          userId: access.userId,
+          name: access.name,
+          plan: await planFor(access.userId),
+        },
+        { headers }
+      );
     }
     const parsed = learningInput.safeParse(body);
     if (!parsed.success || !parsed.data?.clientRecordId)
@@ -46,7 +64,13 @@ export async function handleExtensionLearning(request: Request) {
       { headers }
     );
   } catch (error) {
-    if (error instanceof learning.LearningQuotaError) return respJson(-1, error.message, { reason: error.reason }, { status: 403, headers });
+    if (error instanceof learning.LearningQuotaError)
+      return respJson(
+        -1,
+        error.message,
+        { reason: error.reason },
+        { status: 403, headers }
+      );
     if (
       error instanceof SyntaxError ||
       (error instanceof Error &&

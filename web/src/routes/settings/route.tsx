@@ -3,6 +3,7 @@ import {
   Coins,
   CreditCard,
   Crown,
+  Headphones,
   Home,
   Key,
   LayoutDashboard,
@@ -16,6 +17,7 @@ import { envConfigs } from '@/config';
 import { m } from '@/paraglide/messages.js';
 import { useGuestPostInfo } from '@/hooks/use-guest-posts';
 import { useUserFeatures } from '@/hooks/use-user-features';
+import { PodcastRegistrationNotice } from '@/blocks/podcast-library';
 import { SupportWidget } from '@/blocks/support-widget';
 import { AppLayout } from '@/components/app-layout';
 import type { NavItem } from '@/components/app-sidebar';
@@ -30,6 +32,11 @@ function SettingsLayout() {
   // Optional pages an admin switches in Settings → Users → User Features.
   const features = useUserFeatures();
   const navItems: (NavItem & { show?: boolean })[] = [
+    {
+      href: '/settings/podcasts',
+      label: m['podcast.title'](),
+      icon: Headphones,
+    },
     {
       href: '/settings',
       label: m['settings.nav.overview'](),
@@ -107,6 +114,7 @@ function SettingsLayout() {
       logo={envConfigs.app_logo}
       brandHref="/"
     >
+      <PodcastRegistrationNotice />
       <Outlet />
       <SupportWidget />
     </AppLayout>

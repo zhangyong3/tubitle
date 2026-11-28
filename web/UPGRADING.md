@@ -506,3 +506,16 @@ Update/reload the extension: sentence analysis uses the current website login se
 Reload the rebuilt extension. Version 9 settings default to `serviceMode: tubitle`, routing subtitles through Tubitle translation and sentence analysis through the website account gateway. Personal keys are shown and used only under `serviceMode: custom`, which supports Microsoft/Google subtitle translation and OpenAI-compatible analysis directly from the extension. Personal analysis does not require platform login or consume its quota. Existing personal settings remain local for reuse. Automatic signed-in learning sync is independent of the selected service mode.
 
 Release builds accept `TUBITLE_TRANSLATION_URL` (HTTPS origin, loopback HTTP allowed locally), alongside `TUBITLE_SITE_URL`. Exact host permissions are generated at build time. End users no longer configure a Tubitle endpoint or access key. Configure website AI credentials in admin settings as before. No database migration is required for these extension preferences.
+
+
+## 2026-11-27: Personalized podcasts and retained member usage
+
+Add `user.podcast_language`, `user.podcast_language_notice`, the learning-record source/target language and last-coverage fields, and the four podcast/usage tables. Development uses `pnpm db:push` on an isolated database. Review the additive dialect-specific drafts in `migrations/20261127-podcasts.*.sql` against the deployed schema before applying once through your production migration process; do not run a fresh full-schema export on an existing database. No production migration was applied by this change.
+
+Re-run `pnpm rbac:init` to register `admin.usage.read` and `admin.podcasts.read` (explicitly assigned to the administrator role). Reload/rebuild the extension for language snapshots, browser-language installation defaults, and UTC playback-day uploads. There is no backfill of ambiguous source languages; users confirm older records in the podcast page. Existing account podcast language must be confirmed in the membership center.
+
+Configure Admin → Settings → AI → Learning podcasts: enable switch, script model, Google Cloud service-account JSON and private storage. Existing OpenAI-compatible endpoint/key are reused. New credentials use existing encrypted config storage; use the same CONFIG_ENCRYPTION_KEY in web and background worker. An R2 account ID change requires re-entering its secret. Never enable public access for the podcast bucket.
+
+Deploy the dedicated D1 worker using `wrangler.podcasts.example.jsonc`, with the same D1 database/private R2 bucket as the website, plus the generation/cleanup queue and dead-letter queue. This worker template targets D1; a Node/local worker is available for the existing non-D1 deployment. Keep maintenance running when generation is disabled, and configure a 30-day R2 lifecycle rule for `podcasts/` to cover orphaned uploads. For web-on-Workers audio, add a `PODCAST_BUCKET` binding to the same private bucket. See `../docs/podcast-development.md` for setup and verification.
+
+Rollback by disabling generation/consumption of generation jobs while leaving cleanup jobs and the maintenance schedule active. Keep the additive tables and valid-content reads; do not drop learning records or the persistent free-trial marker.

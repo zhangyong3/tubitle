@@ -9,6 +9,7 @@ import { apiGet, type PageResult } from '@/lib/api-client';
 import { formatDateTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { m } from '@/paraglide/messages.js';
+import { AdminLearningUsage } from '@/blocks/admin-learning-usage';
 import { DataTable, type Column } from '@/components/data-table';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -337,6 +338,7 @@ function UserDetailPage() {
         </CardContent>
       </Card>
 
+      <AdminLearningUsage userId={user.id} />
       <UserTimeline userId={user.id} />
       <UserOrders userId={user.id} />
       <UserCredits userId={user.id} />
